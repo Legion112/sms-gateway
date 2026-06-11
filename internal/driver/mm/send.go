@@ -48,8 +48,8 @@ func (d *Driver) SendMessage(ctx context.Context, number, text string) (modem.Se
 
 func (d *Driver) createSMS(ctx context.Context, number, text string) (dbus.ObjectPath, error) {
 	props := map[string]dbus.Variant{
-		"Number": dbus.MakeVariant(number),
-		"Text":   dbus.MakeVariant(text),
+		"number": dbus.MakeVariant(number),
+		"text":   dbus.MakeVariant(text),
 	}
 
 	type result struct {
