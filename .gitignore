@@ -8,3 +8,4 @@
 *.out
 go.work
 go.work.sum
+config.yaml
