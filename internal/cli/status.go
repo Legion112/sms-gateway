@@ -1,32 +1,28 @@
-package main
+package cli
 
 import (
-	"flag"
 	"fmt"
-	"os"
 
 	"github.com/legion/sms-gateway/internal/cmdutil"
+	"github.com/spf13/cobra"
 )
 
-const (
-	exitOK    = 0
-	exitModem = 1
-	exitSetup = 2
-)
-
-func main() {
-	os.Exit(run())
+func newStatusCmd(flags *cmdutil.Flags) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "status",
+		Short: "Show SIM and SMS readiness",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runStatus(*flags)
+		},
+	}
+	cmdutil.BindModemFlags(cmd, flags)
+	return cmd
 }
 
-func run() int {
-	var flags cmdutil.Flags
-	cmdutil.RegisterFlags(flag.CommandLine, &flags)
-	flag.Parse()
-
+func runStatus(flags cmdutil.Flags) error {
 	cfg, m, err := cmdutil.OpenModem(flags)
 	if err != nil {
-		cmdutil.PrintError("error: %v", err)
-		return exitSetup
+		return cmdutil.NewCLIError(cmdutil.ExitSetup, fmt.Sprintf("error: %v", err))
 	}
 	defer m.Close()
 
@@ -40,8 +36,7 @@ func run() int {
 			fmt.Printf("device: %s\n", status.Device)
 		}
 		fmt.Printf("status: failed\n")
-		cmdutil.PrintError("error: %v", err)
-		return exitModem
+		return cmdutil.NewCLIError(cmdutil.ExitModem, fmt.Sprintf("error: %v", err))
 	}
 
 	fmt.Printf("driver: %s\n", status.Driver)
@@ -55,5 +50,5 @@ func run() int {
 	}
 	fmt.Printf("sms_ready: %t\n", status.SMSReady)
 	fmt.Printf("detail: %s\n", status.Detail)
-	return exitOK
+	return nil
 }

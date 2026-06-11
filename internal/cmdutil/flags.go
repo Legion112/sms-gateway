@@ -2,7 +2,6 @@ package cmdutil
 
 import (
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"time"
@@ -20,16 +19,6 @@ type Flags struct {
 	Timeout    time.Duration
 	ModemIndex int
 	Verbose    bool
-}
-
-// RegisterFlags registers common flags on the given FlagSet.
-func RegisterFlags(fs *flag.FlagSet, f *Flags) {
-	fs.StringVar(&f.ConfigPath, "config", "", "config file path")
-	fs.StringVar(&f.Driver, "driver", "", "driver override: mm | serial")
-	fs.StringVar(&f.Device, "device", "", "serial device (serial driver only)")
-	fs.DurationVar(&f.Timeout, "timeout", 0, "command timeout")
-	fs.IntVar(&f.ModemIndex, "modem-index", -1, "ModemManager modem index (mm driver only)")
-	fs.BoolVar(&f.Verbose, "verbose", false, "verbose logging")
 }
 
 // LoadConfig loads configuration from flags.

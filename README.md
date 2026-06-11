@@ -2,6 +2,15 @@
 
 SMS gateway for receiving SMS messages on Linux using a **Quectel EC25-EUX** LTE modem connected over USB.
 
+Single static binary with subcommands — ideal for headless Raspberry Pi deployment.
+
+```bash
+go build -o bin/sms-gateway ./cmd/sms-gateway
+./bin/sms-gateway ping
+./bin/sms-gateway status
+./bin/sms-gateway ports
+```
+
 The project uses a pluggable **driver** model to talk to the modem:
 
 | Driver | Backend | Default |
@@ -9,13 +18,12 @@ The project uses a pluggable **driver** model to talk to the modem:
 | **`mm`** | ModemManager over system D-Bus | **yes** |
 | **`serial`** | Direct AT commands on `/dev/ttyUSB*` | no |
 
-The first milestone is `modem-ping`: verify the selected driver can reach the EC25.
-
 ## Architecture
 
 ```mermaid
 flowchart TD
-  CLI["cmd/modem-ping"] --> Config["internal/config"]
+  Main["cmd/sms-gateway"] --> CLI["internal/cli"]
+  CLI --> Config["internal/config"]
   Config --> Factory["internal/factory"]
   Factory -->|driver=mm| MM["internal/driver/mm"]
   Factory -->|driver=serial| Serial["internal/driver/serial"]
@@ -23,7 +31,31 @@ flowchart TD
   Serial --> TTY["/dev/ttyUSB2 or ttyUSB3"]
 ```
 
-Both drivers implement `internal/modem.Modem` (`Ping`, `Close`).
+Both drivers implement `internal/modem.Modem` (`Ping`, `SMSStatus`, `Close`).
+
+## Commands
+
+| Command | Description |
+|---------|-------------|
+| `ping` | Check modem connectivity |
+| `status` | Show SIM and SMS readiness |
+| `ports` | List detected serial ports |
+
+Global flags (all subcommands):
+
+```
+--config string    Config file path
+--driver string    Driver override: mm | serial
+-v, --verbose      Verbose logging
+```
+
+Subcommand flags (`ping`, `status`):
+
+```
+--device string       Serial device (serial driver only)
+--timeout duration    Command timeout
+--modem-index int     ModemManager modem index (mm driver only)
+```
 
 ## Hardware
 
@@ -71,13 +103,13 @@ mm:
 
 | Setting | YAML | Environment | CLI flag |
 |---------|------|-------------|----------|
-| Config file | — | `SMS_GATEWAY_CONFIG` | `-config` |
-| Driver | `driver` | `SMS_GATEWAY_DRIVER` | `-driver` |
-| Serial device | `serial.device` | `MODEM_DEVICE` | `-device` |
-| Timeout | `serial.timeout` / `mm.timeout` | `MODEM_TIMEOUT` | `-timeout` |
-| MM modem index | `mm.modem_index` | `MODEM_INDEX` | `-modem-index` |
+| Config file | — | `SMS_GATEWAY_CONFIG` | `--config` |
+| Driver | `driver` | `SMS_GATEWAY_DRIVER` | `--driver` |
+| Serial device | `serial.device` | `MODEM_DEVICE` | `--device` |
+| Timeout | `serial.timeout` / `mm.timeout` | `MODEM_TIMEOUT` | `--timeout` |
+| MM modem index | `mm.modem_index` | `MODEM_INDEX` | `--modem-index` |
 
-Config search order: `-config` path → `./config.yaml` → `/etc/sms-gateway/config.yaml` (skipped if missing).
+Config search order: `--config` path → `./config.yaml` → `/etc/sms-gateway/config.yaml` (skipped if missing).
 
 ## Prerequisites
 
@@ -105,24 +137,37 @@ sudo usermod -aG dialout $USER
 ## Quick start
 
 ```bash
-# Ping the modem (default: ModemManager driver)
-go run ./cmd/modem-ping
+# Build
+go build -o bin/sms-gateway ./cmd/sms-gateway
+
+# Ping modem (default: ModemManager driver)
+./bin/sms-gateway ping
 
 # Check SIM and SMS readiness
-go run ./cmd/sms-status
+./bin/sms-gateway status
 
-# Verbose AT traffic on stderr (serial driver)
-go run ./cmd/modem-ping -driver serial -verbose
-go run ./cmd/sms-status -driver serial -verbose
+# Serial AT driver with verbose logging
+./bin/sms-gateway --driver serial ping -v
 
 # Env override
-SMS_GATEWAY_DRIVER=serial go run ./cmd/modem-ping
+SMS_GATEWAY_DRIVER=serial ./bin/sms-gateway ping
 
 # List serial ports
-go run ./cmd/modem-ping -list-ports
+./bin/sms-gateway ports
+
+# Help
+./bin/sms-gateway --help
+./bin/sms-gateway ping --help
 ```
 
-Expected output (MM driver):
+Development without installing:
+
+```bash
+go run ./cmd/sms-gateway ping
+go run ./cmd/sms-gateway status
+```
+
+Expected output (`ping`, MM driver):
 
 ```
 driver: mm
@@ -131,16 +176,7 @@ status: ok
 detail: QUALCOMM INCORPORATED QUECTEL Mobile Broadband Module (IMEI ..., state ...)
 ```
 
-Expected output (serial driver):
-
-```
-driver: serial
-device: /dev/ttyUSB3
-status: ok
-detail: OK
-```
-
-Expected output (`sms-status`, MM driver):
+Expected output (`status`, MM driver):
 
 ```
 driver: mm
@@ -157,8 +193,8 @@ detail: sim=missing, modem=failed (sim-missing), network=unavailable
 
 | Code | Meaning |
 |------|---------|
-| 0 | Ping succeeded |
-| 1 | Ping failed (modem error, timeout) |
+| 0 | Command succeeded |
+| 1 | Modem operation failed |
 | 2 | Setup failure (config, permissions, driver init) |
 
 ## Driver comparison
@@ -196,25 +232,25 @@ Blocks SMS but not ping. Reseat the nano-SIM and check `mmcli -m 0 | grep -i sim
 ## Project layout
 
 ```
-cmd/modem-ping/           Ping modem connectivity
-cmd/sms-status/           SIM and SMS readiness status
-internal/cmdutil/         Shared CLI flag helpers
+cmd/sms-gateway/          Single binary entrypoint
+internal/cli/             Cobra commands (ping, status, ports)
+internal/cmdutil/         Shared flags and modem helpers
 internal/config/          YAML + env + flag loading
 internal/modem/           Modem interface and types
-internal/factory/           Driver factory
-internal/driver/mm/         ModemManager D-Bus driver (Linux)
-internal/driver/serial/     Direct AT serial driver
+internal/factory/         Driver factory
+internal/driver/mm/       ModemManager D-Bus driver (Linux)
+internal/driver/serial/   Direct AT serial driver
 config.example.yaml       Example configuration
 deploy/udev/              Optional udev rules for serial driver
 ```
 
 ## Roadmap
 
-1. **PoC (current)** — driver-agnostic `modem-ping`
-2. SIM readiness — `AT+CPIN?` / MM SIM status
-3. SMS receive — serial URCs or MM Messaging D-Bus
-4. SMS send — `AT+CMGS` or MM Messaging
-5. HTTP/API gateway — expose SMS to other services
+1. **PoC (current)** — `sms-gateway ping` and `sms-gateway status`
+2. SMS receive — serial URCs or MM Messaging D-Bus
+3. SMS send — `AT+CMGS` or MM Messaging
+4. HTTP/API gateway — expose SMS to other services
+5. systemd unit — run as a service on Pi
 
 ## License
 
