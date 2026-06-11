@@ -46,14 +46,18 @@ func New(cfg config.MMConfig, verbose bool) (modem.Modem, error) {
 		return nil, fmt.Errorf("connect system D-Bus: %w", err)
 	}
 
-	path := resolveModemPath(cfg)
+	path, modemIndex, err := resolveModem(conn, cfg, cfg.Timeout)
+	if err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
 	if verbose {
-		logFn("MM: using modem path %s", path)
+		logFn("MM: using modem path %s (index %d)", path, modemIndex)
 	}
 
 	d := &Driver{
 		conn:       conn,
-		modemIndex: cfg.ModemIndex,
+		modemIndex: modemIndex,
 		modemPath:  path,
 		timeout:    cfg.Timeout,
 		verbose:    verbose,
@@ -68,13 +72,6 @@ func New(cfg config.MMConfig, verbose bool) (modem.Modem, error) {
 	}
 
 	return d, nil
-}
-
-func resolveModemPath(cfg config.MMConfig) dbus.ObjectPath {
-	if cfg.ModemPath != "" {
-		return dbus.ObjectPath(cfg.ModemPath)
-	}
-	return dbus.ObjectPath(fmt.Sprintf("/org/freedesktop/ModemManager1/Modem/%d", cfg.ModemIndex))
 }
 
 // Ping verifies the modem is reachable via ModemManager.
@@ -166,18 +163,13 @@ func ParseManagedObjects(managed map[dbus.ObjectPath]map[string]map[string]dbus.
 	return listModemPaths(managed)
 }
 
-// SelectModemPath returns the path at index or an error.
+// SelectModemPath returns the path at logical index or an error.
 func SelectModemPath(paths []dbus.ObjectPath, index int) (dbus.ObjectPath, error) {
 	if len(paths) == 0 {
 		return "", fmt.Errorf("no modems found")
 	}
 	if index < 0 || index >= len(paths) {
-		return "", fmt.Errorf("modem index %d not found (found %d modems)", index, len(paths))
+		return "", fmt.Errorf("modem index %d not found (found %d modems: %v)", index, len(paths), paths)
 	}
 	return paths[index], nil
-}
-
-// ResolveModemPath is exported for unit tests.
-func ResolveModemPath(cfg config.MMConfig) dbus.ObjectPath {
-	return resolveModemPath(cfg)
 }

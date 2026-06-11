@@ -9,14 +9,24 @@ import (
 	"github.com/legion/sms-gateway/internal/config"
 )
 
-func TestResolveModemPath(t *testing.T) {
-	path := ResolveModemPath(config.MMConfig{ModemIndex: 0})
-	if path != "/org/freedesktop/ModemManager1/Modem/0" {
-		t.Fatalf("path = %s", path)
+func TestResolveModemPathForTest(t *testing.T) {
+	paths := []dbus.ObjectPath{
+		"/org/freedesktop/ModemManager1/Modem/1",
 	}
-	path = ResolveModemPath(config.MMConfig{ModemPath: "/org/freedesktop/ModemManager1/Modem/2"})
-	if path != "/org/freedesktop/ModemManager1/Modem/2" {
-		t.Fatalf("path = %s", path)
+	p, err := ResolveModemPathForTest(config.MMConfig{ModemIndex: 0}, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p != paths[0] {
+		t.Fatalf("path = %s, want %s", p, paths[0])
+	}
+
+	p, err = ResolveModemPathForTest(config.MMConfig{ModemPath: "/org/freedesktop/ModemManager1/Modem/2"}, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p != "/org/freedesktop/ModemManager1/Modem/2" {
+		t.Fatalf("path = %s", p)
 	}
 }
 

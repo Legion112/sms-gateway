@@ -7,6 +7,6 @@ serial:
   timeout: 2s
 
 mm:
-  modem_index: 0      # index among modems reported by ModemManager
-  # modem_path: /org/freedesktop/ModemManager1/Modem/0  # optional explicit D-Bus path
+  modem_index: 0      # logical index (0 = first modem from mmcli -L); not the D-Bus path suffix
+  # modem_path: /org/freedesktop/ModemManager1/Modem/1  # optional explicit D-Bus path
   timeout: 5s

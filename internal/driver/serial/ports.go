@@ -37,7 +37,7 @@ func openAuto(cfg openConfig) (serial.Port, string, error) {
 		}
 	}
 	if lastErr != nil {
-		return nil, "", fmt.Errorf("no available AT port (tried %v): %w", ATPorts, lastErr)
+		return nil, "", fmt.Errorf("no available AT port (tried %v): %w (ModemManager may hold these ports; use --driver mm or install deploy/udev/99-quectel-at.rules)", ATPorts, lastErr)
 	}
 	return nil, "", fmt.Errorf("no AT ports to probe")
 }
