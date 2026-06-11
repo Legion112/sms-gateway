@@ -42,10 +42,19 @@ type Message struct {
 	SMSC      string
 }
 
+// SendResult is returned after submitting an outbound SMS.
+type SendResult struct {
+	ID    string
+	To    string
+	State string
+	Text  string
+}
+
 // Modem is the backend interface for communicating with the EC25.
 type Modem interface {
 	Ping(ctx context.Context) (PingResult, error)
 	SMSStatus(ctx context.Context) (SMSStatus, error)
 	ListMessages(ctx context.Context) ([]Message, error)
+	SendMessage(ctx context.Context, number, text string) (SendResult, error)
 	Close() error
 }

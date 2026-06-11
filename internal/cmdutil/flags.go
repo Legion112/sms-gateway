@@ -68,6 +68,18 @@ func SMSContext(cfg config.Config) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), timeout)
 }
 
+// SendContext returns a timeout context for outbound SMS operations.
+func SendContext(cfg config.Config) (context.Context, context.CancelFunc) {
+	timeout := cfg.MM.Timeout * 6
+	if cfg.Driver == config.DriverSerial {
+		timeout = cfg.Serial.Timeout * 6
+	}
+	if timeout < 30*time.Second {
+		timeout = 30 * time.Second
+	}
+	return context.WithTimeout(context.Background(), timeout)
+}
+
 // PrintError writes an error to stderr.
 func PrintError(format string, args ...any) {
 	fmt.Fprintf(os.Stderr, format+"\n", args...)

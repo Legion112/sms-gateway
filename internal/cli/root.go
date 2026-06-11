@@ -32,5 +32,6 @@ func init() {
 	rootCmd.AddCommand(newPingCmd(&rootFlags))
 	rootCmd.AddCommand(newStatusCmd(&rootFlags))
 	rootCmd.AddCommand(newMessagesCmd(&rootFlags))
+	rootCmd.AddCommand(newSendCmd(&rootFlags))
 	rootCmd.AddCommand(newPortsCmd())
 }
