@@ -31,9 +31,21 @@ type SMSStatus struct {
 	Detail       string
 }
 
+// Message is a single SMS message.
+type Message struct {
+	ID        string
+	From      string
+	Text      string
+	State     string
+	Timestamp string
+	Storage   string
+	SMSC      string
+}
+
 // Modem is the backend interface for communicating with the EC25.
 type Modem interface {
 	Ping(ctx context.Context) (PingResult, error)
 	SMSStatus(ctx context.Context) (SMSStatus, error)
+	ListMessages(ctx context.Context) ([]Message, error)
 	Close() error
 }

@@ -39,6 +39,7 @@ Both drivers implement `internal/modem.Modem` (`Ping`, `SMSStatus`, `Close`).
 |---------|-------------|
 | `ping` | Check modem connectivity |
 | `status` | Show SIM and SMS readiness |
+| `messages` | List all SMS messages |
 | `ports` | List detected serial ports |
 
 Global flags (all subcommands):
@@ -146,6 +147,9 @@ go build -o bin/sms-gateway ./cmd/sms-gateway
 # Check SIM and SMS readiness
 ./bin/sms-gateway status
 
+# List all SMS messages
+./bin/sms-gateway messages
+
 # Serial AT driver with verbose logging
 ./bin/sms-gateway --driver serial ping -v
 
@@ -233,7 +237,7 @@ Blocks SMS but not ping. Reseat the nano-SIM and check `mmcli -m 0 | grep -i sim
 
 ```
 cmd/sms-gateway/          Single binary entrypoint
-internal/cli/             Cobra commands (ping, status, ports)
+internal/cli/             Cobra commands (ping, status, messages, ports)
 internal/cmdutil/         Shared flags and modem helpers
 internal/config/          YAML + env + flag loading
 internal/modem/           Modem interface and types

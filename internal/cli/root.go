@@ -31,5 +31,6 @@ func init() {
 	cmdutil.BindPersistentFlags(rootCmd, &rootFlags)
 	rootCmd.AddCommand(newPingCmd(&rootFlags))
 	rootCmd.AddCommand(newStatusCmd(&rootFlags))
+	rootCmd.AddCommand(newMessagesCmd(&rootFlags))
 	rootCmd.AddCommand(newPortsCmd())
 }
