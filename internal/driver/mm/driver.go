@@ -120,44 +120,9 @@ func (d *Driver) Close() error {
 }
 
 func (d *Driver) readModemProperties(ctx context.Context) (map[string]dbus.Variant, error) {
-	type result struct {
-		props map[string]dbus.Variant
-		err   error
-	}
-	ch := make(chan result, 1)
-	go func() {
-		obj := d.conn.Object(mmBusName, d.modemPath)
-		props := make(map[string]dbus.Variant)
-		for _, key := range []string{"Manufacturer", "Model", "State", "EquipmentIdentifier"} {
-			prop := obj.Call("org.freedesktop.DBus.Properties.Get", 0, modemInterface, key)
-			if prop.Err != nil {
-				ch <- result{err: prop.Err}
-				return
-			}
-			var variant dbus.Variant
-			if err := prop.Store(&variant); err != nil {
-				ch <- result{err: err}
-				return
-			}
-			props[key] = variant
-		}
-		ch <- result{props: props}
-	}()
-
-	timer := time.NewTimer(d.timeout)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-timer.C:
-		return nil, fmt.Errorf("timeout reading modem properties")
-	case res := <-ch:
-		if res.err != nil {
-			return nil, res.err
-		}
-		return res.props, nil
-	}
+	return d.getObjectProperties(ctx, d.modemPath, modemInterface, []string{
+		"Manufacturer", "Model", "State", "EquipmentIdentifier",
+	})
 }
 
 // listModemPaths extracts modem object paths from GetManagedObjects output, sorted.

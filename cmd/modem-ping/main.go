@@ -1,14 +1,12 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"os"
 
-	"github.com/legion/sms-gateway/internal/config"
+	"github.com/legion/sms-gateway/internal/cmdutil"
 	"github.com/legion/sms-gateway/internal/driver/serial"
-	"github.com/legion/sms-gateway/internal/factory"
 )
 
 const (
@@ -22,52 +20,23 @@ func main() {
 }
 
 func run() int {
-	var (
-		configPath = flag.String("config", "", "config file path")
-		driver     = flag.String("driver", "", "driver override: mm | serial")
-		device     = flag.String("device", "", "serial device (serial driver only)")
-		timeout    = flag.Duration("timeout", 0, "command timeout")
-		modemIndex = flag.Int("modem-index", -1, "ModemManager modem index (mm driver only)")
-		verbose    = flag.Bool("verbose", false, "verbose logging")
-		listPorts  = flag.Bool("list-ports", false, "list serial ports and exit")
-	)
+	var flags cmdutil.Flags
+	cmdutil.RegisterFlags(flag.CommandLine, &flags)
+	listPorts := flag.Bool("list-ports", false, "list serial ports and exit")
 	flag.Parse()
 
 	if *listPorts {
 		return listSerialPorts()
 	}
 
-	var indexOverride *int
-	if *modemIndex >= 0 {
-		indexOverride = modemIndex
-	}
-
-	cfg, err := config.Load(config.Overrides{
-		ConfigPath: *configPath,
-		Driver:     *driver,
-		Device:     *device,
-		Timeout:    *timeout,
-		ModemIndex: indexOverride,
-		Verbose:    *verbose,
-	})
+	cfg, m, err := cmdutil.OpenModem(flags)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		return exitSetup
-	}
-
-	m, err := factory.New(cfg)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		cmdutil.PrintError("error: %v", err)
 		return exitSetup
 	}
 	defer m.Close()
 
-	pingTimeout := cfg.MM.Timeout
-	if cfg.Driver == config.DriverSerial {
-		pingTimeout = cfg.Serial.Timeout
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout*2)
+	ctx, cancel := cmdutil.Context(cfg)
 	defer cancel()
 
 	result, err := m.Ping(ctx)
@@ -77,7 +46,7 @@ func run() int {
 			fmt.Printf("device: %s\n", result.Device)
 		}
 		fmt.Printf("status: failed\n")
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		cmdutil.PrintError("error: %v", err)
 		return exitModem
 	}
 
@@ -91,7 +60,7 @@ func run() int {
 func listSerialPorts() int {
 	ports, err := serial.ListPorts()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: list ports: %v\n", err)
+		cmdutil.PrintError("error: list ports: %v", err)
 		return exitSetup
 	}
 	if len(ports) == 0 {

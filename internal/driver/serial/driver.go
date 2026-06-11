@@ -59,6 +59,7 @@ func New(cfg config.SerialConfig, verbose bool) (modem.Modem, error) {
 	}
 	d.port = port
 	d.device = device
+	drainPort(port)
 	return d, nil
 }
 
@@ -98,6 +99,17 @@ type openConfig struct {
 	Timeout  time.Duration
 	Verbose  bool
 	Log      func(format string, args ...any)
+}
+
+func drainPort(port serial.Port) {
+	buf := make([]byte, 256)
+	deadline := time.Now().Add(200 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		n, err := port.Read(buf)
+		if err != nil || n == 0 {
+			break
+		}
+	}
 }
 
 func openPort(cfg openConfig) (serial.Port, error) {
@@ -166,6 +178,14 @@ func (d *Driver) exec(ctx context.Context, command string) (string, error) {
 		}
 		buf.WriteString(trimmed)
 
+		if cmeErr, ok := parseCMEError(trimmed); ok {
+			if buf.Len() > 0 {
+				buf.WriteByte('\n')
+			}
+			buf.WriteString(trimmed)
+			return buf.String(), fmt.Errorf("modem returned %s", cmeErr)
+		}
+
 		switch parseResultCode(trimmed) {
 		case resultOK:
 			return buf.String(), nil
@@ -189,6 +209,14 @@ const (
 	resultOK
 	resultError
 )
+
+func parseCMEError(line string) (string, bool) {
+	upper := strings.ToUpper(strings.TrimSpace(line))
+	if strings.HasPrefix(upper, "+CME ERROR") || strings.HasPrefix(upper, "+CMS ERROR") {
+		return strings.TrimSpace(line), true
+	}
+	return "", false
+}
 
 func parseResultCode(line string) resultCode {
 	switch strings.ToUpper(strings.TrimSpace(line)) {

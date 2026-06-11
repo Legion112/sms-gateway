@@ -105,14 +105,15 @@ sudo usermod -aG dialout $USER
 ## Quick start
 
 ```bash
-# Default: ModemManager driver
+# Ping the modem (default: ModemManager driver)
 go run ./cmd/modem-ping
 
-# Verbose
-go run ./cmd/modem-ping -verbose
+# Check SIM and SMS readiness
+go run ./cmd/sms-status
 
-# Serial AT driver
+# Verbose AT traffic on stderr (serial driver)
 go run ./cmd/modem-ping -driver serial -verbose
+go run ./cmd/sms-status -driver serial -verbose
 
 # Env override
 SMS_GATEWAY_DRIVER=serial go run ./cmd/modem-ping
@@ -137,6 +138,19 @@ driver: serial
 device: /dev/ttyUSB3
 status: ok
 detail: OK
+```
+
+Expected output (`sms-status`, MM driver):
+
+```
+driver: mm
+device: /org/freedesktop/ModemManager1/Modem/0
+sim: missing
+modem: failed (sim-missing)
+network: unavailable
+messages: unknown
+sms_ready: false
+detail: sim=missing, modem=failed (sim-missing), network=unavailable
 ```
 
 ### Exit codes
@@ -182,7 +196,9 @@ Blocks SMS but not ping. Reseat the nano-SIM and check `mmcli -m 0 | grep -i sim
 ## Project layout
 
 ```
-cmd/modem-ping/           CLI
+cmd/modem-ping/           Ping modem connectivity
+cmd/sms-status/           SIM and SMS readiness status
+internal/cmdutil/         Shared CLI flag helpers
 internal/config/          YAML + env + flag loading
 internal/modem/           Modem interface and types
 internal/factory/           Driver factory
