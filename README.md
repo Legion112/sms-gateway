@@ -2,7 +2,28 @@
 
 SMS gateway for receiving SMS messages on Linux using a **Quectel EC25-EUX** LTE modem connected over USB.
 
-The project talks to the modem over its AT command serial port. The first milestone is a minimal proof of concept: confirm the Go application can open the serial port and receive `OK` from a basic `AT` command.
+The project uses a pluggable **driver** model to talk to the modem:
+
+| Driver | Backend | Default |
+|--------|---------|---------|
+| **`mm`** | ModemManager over system D-Bus | **yes** |
+| **`serial`** | Direct AT commands on `/dev/ttyUSB*` | no |
+
+The first milestone is `modem-ping`: verify the selected driver can reach the EC25.
+
+## Architecture
+
+```mermaid
+flowchart TD
+  CLI["cmd/modem-ping"] --> Config["internal/config"]
+  Config --> Factory["internal/factory"]
+  Factory -->|driver=mm| MM["internal/driver/mm"]
+  Factory -->|driver=serial| Serial["internal/driver/serial"]
+  MM --> DBus["ModemManager D-Bus"]
+  Serial --> TTY["/dev/ttyUSB2 or ttyUSB3"]
+```
+
+Both drivers implement `internal/modem.Modem` (`Ping`, `Close`).
 
 ## Hardware
 
@@ -10,8 +31,7 @@ The project talks to the modem over its AT command serial port. The first milest
 |-----------|---------|
 | Modem | Quectel EC25-EUX (USB VID `2c7c`, PID `0125`) |
 | Connection | USB to host computer |
-| AT port | `/dev/ttyUSB2` (115200 baud, 8N1) |
-| SIM | Required for SMS later; **not** required for the AT ping PoC |
+| SIM | Required for SMS later; **not** required for ping PoC |
 
 Typical USB interfaces exposed by the EC25 on Linux:
 
@@ -24,24 +44,49 @@ Typical USB interfaces exposed by the EC25 on Linux:
 | `/dev/cdc-wdm*` | QMI |
 | `wwan0` | Network interface |
 
-## Prerequisites
+## Configuration
 
-- Linux with Quectel USB drivers loaded (`option`, `qmi_wwan`)
-- Go **1.26** or newer
-- User in the `dialout` group (serial port access)
-
-### Install Go 1.26
-
-If your system Go is older, install 1.26 from [go.dev/dl](https://go.dev/dl/):
+Copy the example config:
 
 ```bash
-wget https://go.dev/dl/go1.26.0.linux-amd64.tar.gz
-sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.26.0.linux-amd64.tar.gz
-export PATH=/usr/local/go/bin:$PATH
-go version
+cp config.example.yaml config.yaml
 ```
 
-Alternatively, install without sudo to `~/.local/go1.26`:
+Example [`config.example.yaml`](config.example.yaml):
+
+```yaml
+driver: mm   # mm | serial
+
+serial:
+  device: auto
+  baud_rate: 115200
+  timeout: 2s
+
+mm:
+  modem_index: 0
+  timeout: 5s
+```
+
+**Precedence** (highest wins): CLI flags → environment variables → YAML file → built-in defaults.
+
+| Setting | YAML | Environment | CLI flag |
+|---------|------|-------------|----------|
+| Config file | — | `SMS_GATEWAY_CONFIG` | `-config` |
+| Driver | `driver` | `SMS_GATEWAY_DRIVER` | `-driver` |
+| Serial device | `serial.device` | `MODEM_DEVICE` | `-device` |
+| Timeout | `serial.timeout` / `mm.timeout` | `MODEM_TIMEOUT` | `-timeout` |
+| MM modem index | `mm.modem_index` | `MODEM_INDEX` | `-modem-index` |
+
+Config search order: `-config` path → `./config.yaml` → `/etc/sms-gateway/config.yaml` (skipped if missing).
+
+## Prerequisites
+
+- Linux with Quectel USB drivers (`option`, `qmi_wwan`)
+- Go **1.26** or newer
+- **`mm` driver:** `ModemManager` running (`systemctl status ModemManager`)
+- **`serial` driver:** user in `dialout` group
+
+### Install Go 1.26
 
 ```bash
 curl -fsSL -o /tmp/go1.26.0.linux-amd64.tar.gz https://go.dev/dl/go1.26.0.linux-amd64.tar.gz
@@ -50,123 +95,110 @@ export PATH=$HOME/.local/go1.26/bin:$PATH
 go version
 ```
 
-Alternatively, with Go 1.21+ toolchain management, `go mod tidy` in this repo will auto-download Go 1.26 when `GOTOOLCHAIN=auto` (default).
-
-### Serial port permissions
+### Serial port permissions (serial driver only)
 
 ```bash
 sudo usermod -aG dialout $USER
-# log out and back in, or run: newgrp dialout
-```
-
-### ModemManager
-
-ModemManager may hold the AT port. For direct serial access during development:
-
-**Option A — udev rule (preferred):** create `/etc/udev/rules.d/99-quectel-at.rules`:
-
-```
-# Ignore EC25 AT port so ModemManager does not claim it
-SUBSYSTEM=="tty", ATTRS{idVendor}=="2c7c", ATTRS{idProduct}=="0125", ENV{ID_MM_PORT_IGNORE}="1", KERNEL=="ttyUSB2"
-```
-
-Then reload udev and reconnect the modem:
-
-```bash
-sudo udevadm control --reload-rules && sudo udevadm trigger
-```
-
-**Option B — temporary:** stop ModemManager while testing:
-
-```bash
-sudo systemctl stop ModemManager
+# log out and back in
 ```
 
 ## Quick start
 
 ```bash
-# List detected serial ports
-go run ./cmd/modem-ping -list-ports
-
-# Ping the modem (default device: /dev/ttyUSB2)
+# Default: ModemManager driver
 go run ./cmd/modem-ping
 
-# Verbose AT traffic on stderr
+# Verbose
 go run ./cmd/modem-ping -verbose
 
-# Custom device or timeout
-go run ./cmd/modem-ping -device /dev/ttyUSB2 -timeout 3s
+# Serial AT driver
+go run ./cmd/modem-ping -driver serial -verbose
+
+# Env override
+SMS_GATEWAY_DRIVER=serial go run ./cmd/modem-ping
+
+# List serial ports
+go run ./cmd/modem-ping -list-ports
 ```
 
-Build a binary:
-
-```bash
-go build -o bin/modem-ping ./cmd/modem-ping
-./bin/modem-ping
-```
-
-Expected success output:
+Expected output (MM driver):
 
 ```
-device: /dev/ttyUSB2
+driver: mm
+device: /org/freedesktop/ModemManager1/Modem/0
 status: ok
-response: OK
+detail: QUALCOMM INCORPORATED QUECTEL Mobile Broadband Module (IMEI ..., state ...)
+```
+
+Expected output (serial driver):
+
+```
+driver: serial
+device: /dev/ttyUSB3
+status: ok
+detail: OK
 ```
 
 ### Exit codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Modem responded `OK` |
-| 1 | Modem responded `ERROR` or unexpected/timeout response |
-| 2 | Setup failure (permissions, port missing, list ports error) |
+| 0 | Ping succeeded |
+| 1 | Ping failed (modem error, timeout) |
+| 2 | Setup failure (config, permissions, driver init) |
 
-Environment variable `MODEM_DEVICE` overrides the default device path.
+## Driver comparison
 
-## Verify the modem is connected
-
-```bash
-lsusb | grep 2c7c:0125
-mmcli -L
-```
+| | **mm** (default) | **serial** |
+|--|------------------|------------|
+| Best for | Headless Pi, desktop with MM | Dedicated gateway, full AT control |
+| Permissions | D-Bus / polkit (usually works for session user) | `dialout` group |
+| Port busy issue | No serial port opened | May need `auto` fallback or udev rule |
+| Pi OS Bookworm | Works out of the box | Works with `dialout` |
 
 ## Troubleshooting
 
-### Permission denied on `/dev/ttyUSB*`
+### MM driver: modem not found
 
-Add your user to `dialout` and start a new login session. Verify with `groups`.
+- Check ModemManager: `systemctl status ModemManager`
+- List modems: `mmcli -L`
+- Try explicit path in config: `mm.modem_path: /org/freedesktop/ModemManager1/Modem/0`
 
-### Timeout / no response
+### Serial driver: Serial port busy
 
-- Confirm the EC25 is plugged in: `lsusb | grep 2c7c`
-- Use the correct AT port (`ttyUSB2`, not `ttyUSB1` which is GPS)
-- Stop ModemManager or add the udev rule above
-- Try `-verbose` to see raw TX/RX
+ModemManager holds `/dev/ttyUSB2`. Use default `auto` device probing (tries `ttyUSB2` then `ttyUSB3`) or install the udev rule:
+
+```bash
+sudo cp deploy/udev/99-quectel-at.rules /etc/udev/rules.d/
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Or use the **mm** driver (default) to avoid serial port contention entirely.
 
 ### SIM not detected (`sim-missing`)
 
-ModemManager may report `sim-missing`. This blocks SMS but **not** the AT ping PoC. Reseat the nano-SIM in the holder (correct orientation and alignment), then check:
-
-```bash
-mmcli -m 0 | grep -i sim
-```
+Blocks SMS but not ping. Reseat the nano-SIM and check `mmcli -m 0 | grep -i sim`.
 
 ## Project layout
 
 ```
-cmd/modem-ping/     CLI to verify modem connectivity
-internal/modem/     AT serial client
+cmd/modem-ping/           CLI
+internal/config/          YAML + env + flag loading
+internal/modem/           Modem interface and types
+internal/factory/           Driver factory
+internal/driver/mm/         ModemManager D-Bus driver (Linux)
+internal/driver/serial/     Direct AT serial driver
+config.example.yaml       Example configuration
+deploy/udev/              Optional udev rules for serial driver
 ```
 
 ## Roadmap
 
-1. **PoC (current)** — `modem-ping`: open serial port, send `AT`, expect `OK`
-2. SIM readiness — `AT+CPIN?`, signal and registration checks
-3. SMS receive — configure `AT+CNMI`, handle `+CMTI` URCs, read messages with `AT+CMGR`
-4. HTTP/API gateway — expose received SMS to other services
-5. Production — systemd unit, logging, error recovery
-
-For SMS handling, consider [github.com/warthog618/modem](https://github.com/warthog618/modem) as a higher-level AT driver built on `io.ReadWriter`.
+1. **PoC (current)** — driver-agnostic `modem-ping`
+2. SIM readiness — `AT+CPIN?` / MM SIM status
+3. SMS receive — serial URCs or MM Messaging D-Bus
+4. SMS send — `AT+CMGS` or MM Messaging
+5. HTTP/API gateway — expose SMS to other services
 
 ## License
 

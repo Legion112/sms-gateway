@@ -4,13 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
 	"os"
-	"time"
 
-	"github.com/legion/sms-gateway/internal/modem"
-
-	"go.bug.st/serial"
+	"github.com/legion/sms-gateway/internal/config"
+	"github.com/legion/sms-gateway/internal/driver/serial"
+	"github.com/legion/sms-gateway/internal/factory"
 )
 
 const (
@@ -24,56 +22,74 @@ func main() {
 }
 
 func run() int {
-	device := flag.String("device", envOr("MODEM_DEVICE", modem.DefaultDevice), "serial device path")
-	timeout := flag.Duration("timeout", 2*time.Second, "per-command timeout")
-	verbose := flag.Bool("verbose", false, "log raw AT traffic to stderr")
-	listPorts := flag.Bool("list-ports", false, "list serial ports and exit")
+	var (
+		configPath = flag.String("config", "", "config file path")
+		driver     = flag.String("driver", "", "driver override: mm | serial")
+		device     = flag.String("device", "", "serial device (serial driver only)")
+		timeout    = flag.Duration("timeout", 0, "command timeout")
+		modemIndex = flag.Int("modem-index", -1, "ModemManager modem index (mm driver only)")
+		verbose    = flag.Bool("verbose", false, "verbose logging")
+		listPorts  = flag.Bool("list-ports", false, "list serial ports and exit")
+	)
 	flag.Parse()
 
 	if *listPorts {
 		return listSerialPorts()
 	}
 
-	logFn := func(format string, args ...any) {
-		if *verbose {
-			log.Printf(format, args...)
-		}
+	var indexOverride *int
+	if *modemIndex >= 0 {
+		indexOverride = modemIndex
 	}
 
-	client, err := modem.Open(modem.Config{
-		Device:  *device,
-		Timeout: *timeout,
-		Verbose: *verbose,
-		Log:     logFn,
+	cfg, err := config.Load(config.Overrides{
+		ConfigPath: *configPath,
+		Driver:     *driver,
+		Device:     *device,
+		Timeout:    *timeout,
+		ModemIndex: indexOverride,
+		Verbose:    *verbose,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return exitSetup
 	}
-	defer client.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout*2)
+	m, err := factory.New(cfg)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		return exitSetup
+	}
+	defer m.Close()
+
+	pingTimeout := cfg.MM.Timeout
+	if cfg.Driver == config.DriverSerial {
+		pingTimeout = cfg.Serial.Timeout
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout*2)
 	defer cancel()
 
-	response, err := client.Ping(ctx)
+	result, err := m.Ping(ctx)
 	if err != nil {
-		fmt.Printf("device: %s\n", *device)
-		fmt.Printf("status: failed\n")
-		if response != "" {
-			fmt.Printf("response: %s\n", response)
+		fmt.Printf("driver: %s\n", cfg.Driver)
+		if result.Device != "" {
+			fmt.Printf("device: %s\n", result.Device)
 		}
+		fmt.Printf("status: failed\n")
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
 		return exitModem
 	}
 
-	fmt.Printf("device: %s\n", *device)
+	fmt.Printf("driver: %s\n", result.Driver)
+	fmt.Printf("device: %s\n", result.Device)
 	fmt.Printf("status: ok\n")
-	fmt.Printf("response: OK\n")
+	fmt.Printf("detail: %s\n", result.Detail)
 	return exitOK
 }
 
 func listSerialPorts() int {
-	ports, err := serial.GetPortsList()
+	ports, err := serial.ListPorts()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: list ports: %v\n", err)
 		return exitSetup
@@ -86,11 +102,4 @@ func listSerialPorts() int {
 		fmt.Println(p)
 	}
 	return exitOK
-}
-
-func envOr(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }

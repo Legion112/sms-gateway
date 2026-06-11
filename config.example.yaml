@@ -1,0 +1,12 @@
+# Copy to config.yaml or /etc/sms-gateway/config.yaml
+driver: mm   # mm | serial
+
+serial:
+  device: auto        # auto | /dev/ttyUSB2 | ...
+  baud_rate: 115200
+  timeout: 2s
+
+mm:
+  modem_index: 0      # index among modems reported by ModemManager
+  # modem_path: /org/freedesktop/ModemManager1/Modem/0  # optional explicit D-Bus path
+  timeout: 5s

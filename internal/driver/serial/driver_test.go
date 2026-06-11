@@ -1,4 +1,4 @@
-package modem
+package serial
 
 import "testing"
 
@@ -26,3 +26,28 @@ func TestParseResultCode(t *testing.T) {
 		})
 	}
 }
+
+func TestIsPortBusy(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"busy", errString("Serial port busy"), true},
+		{"permission", errString("Permission denied"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := IsPortBusy(tt.err)
+			if got != tt.want {
+				t.Fatalf("IsPortBusy() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+type errString string
+
+func (e errString) Error() string { return string(e) }
