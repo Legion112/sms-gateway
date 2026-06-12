@@ -254,9 +254,9 @@ deploy/udev/              Optional udev rules for serial driver
 
 ## Roadmap
 
-1. **PoC (current)** — `sms-gateway ping` and `sms-gateway status`
-2. SMS receive — serial URCs or MM Messaging D-Bus
-3. SMS send — `AT+CMGS` or MM Messaging
+1. **PoC (done)** — `ping`, `status`, `messages`, `send`
+2. **Persist messages** — save ncoming SMS to SQLite (or another local DB); modem/SIM storage is limited and may not survive power-off
+3. SMS receive watcher — poll or subscribe (serial URCs / MM Messaging D-Bus) and ingest new messages into local storage
 4. HTTP/API gateway — expose SMS to other services
 5. systemd unit — run as a service on Pi
 
