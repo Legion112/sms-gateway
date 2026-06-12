@@ -23,10 +23,14 @@ const (
 
 // Config holds application configuration.
 type Config struct {
-	Driver  string       `yaml:"driver"`
-	Serial  SerialConfig `yaml:"serial"`
-	MM      MMConfig     `yaml:"mm"`
-	Verbose bool         `yaml:"-"`
+	Driver       string                   `yaml:"driver"`
+	Serial       SerialConfig             `yaml:"serial"`
+	MM           MMConfig                 `yaml:"mm"`
+	DefaultModem string                   `yaml:"default_modem"`
+	Modems       map[string]ModemEntry    `yaml:"modems"`
+	Channels     map[string]ChannelConfig `yaml:"channels"`
+	ForwardRules []ForwardRule            `yaml:"forward_rules"`
+	Verbose      bool                     `yaml:"-"`
 }
 
 // SerialConfig holds direct AT serial driver settings.
@@ -90,6 +94,11 @@ func Load(overrides Overrides) (Config, error) {
 		return cfg, fmt.Errorf("unknown driver %q (want %q or %q)", cfg.Driver, DriverMM, DriverSerial)
 	}
 
+	applyForwardingEnv(&cfg)
+	if err := validateForwarding(cfg); err != nil {
+		return cfg, err
+	}
+
 	return cfg, nil
 }
 
@@ -133,6 +142,7 @@ func loadFile(path string, cfg *Config) error {
 			ModemPath  string `yaml:"modem_path"`
 			Timeout    string `yaml:"timeout"`
 		} `yaml:"mm"`
+		forwardFile `yaml:",inline"`
 	}
 	if err := yaml.Unmarshal(data, &file); err != nil {
 		return fmt.Errorf("parse config: %w", err)
@@ -168,6 +178,22 @@ func loadFile(path string, cfg *Config) error {
 		cfg.MM.Timeout = d
 	}
 
+	if err := applyModemTimeouts(cfg.Modems); err != nil {
+		return err
+	}
+	return applyForwardingFile(&file.forwardFile, cfg)
+}
+
+func applyModemTimeouts(modems map[string]ModemEntry) error {
+	for name, m := range modems {
+		if m.Serial.Timeout == 0 {
+			m.Serial.Timeout = 2 * time.Second
+		}
+		if m.MM.Timeout == 0 {
+			m.MM.Timeout = 5 * time.Second
+		}
+		modems[name] = m
+	}
 	return nil
 }
 

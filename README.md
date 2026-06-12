@@ -31,7 +31,9 @@ flowchart TD
   Serial --> TTY["/dev/ttyUSB2 or ttyUSB3"]
 ```
 
-Both drivers implement `internal/modem.Modem` (`Ping`, `SMSStatus`, `Close`).
+Both drivers implement `internal/modem.Modem` (`Ping`, `SMSStatus`, `ListMessages`, `SendMessage`, `Close`).
+
+Forward channels (Telegram, email, SMS, …) implement `internal/forward.Channel` with the same factory pattern as modem drivers.
 
 ## Commands
 
@@ -41,6 +43,7 @@ Both drivers implement `internal/modem.Modem` (`Ping`, `SMSStatus`, `Close`).
 | `status` | Show SIM and SMS readiness |
 | `messages` | List all SMS messages |
 | `send` | Send an SMS (`--number`, `--text`) |
+| `channel test` | Send a test message via a forward channel (e.g. Telegram) |
 | `ports` | List detected serial ports |
 
 Global flags (all subcommands):
@@ -112,6 +115,41 @@ mm:
 | MM modem index | `mm.modem_index` | `MODEM_INDEX` | `--modem-index` |
 
 Config search order: `--config` path → `./config.yaml` → `/etc/sms-gateway/config.yaml` (skipped if missing).
+
+### Forwarding
+
+Optional sections in [`config.example.yaml`](config.example.yaml):
+
+| Section | Purpose |
+|---------|---------|
+| `modems` | Named modems for multi-SIM setups (hardware settings) |
+| `channels` | Named forward destinations (Telegram bot, email, SMS, …) |
+| `forward_rules` | Route inbound SMS: `modem` + `from` → `to: [channels]` (first match wins) |
+
+**Channel drivers:**
+
+| Driver | Status |
+|--------|--------|
+| `telegram_bot` | Implemented — Bot API private chat |
+| `telegram_secret` | Planned — Secret Chat (E2E) |
+| `email` | Planned |
+| `sms` | Planned — forward by sending SMS to another number |
+
+**Telegram setup:**
+
+1. Create a bot via [@BotFather](https://t.me/BotFather) → copy `bot_token`.
+2. Open a chat with the bot and send `/start`.
+3. Get your `chat_id` (`curl "https://api.telegram.org/bot<TOKEN>/getUpdates"` after `/start`).
+4. Set token via env (recommended): `SMS_GATEWAY_CHANNEL_MY_TELEGRAM_BOT_TOKEN` or `SMS_GATEWAY_TELEGRAM_BOT_TOKEN`.
+
+**Test channel:**
+
+```bash
+sms-gateway channel test my-telegram
+sms-gateway channel test my-telegram --text "Hello from Pi" -v
+```
+
+**Security:** Bot API uses TLS to Telegram, but SMS text is **visible to Telegram** (cloud chat, not Secret Chat). For maximum privacy, a future `telegram_secret` driver is planned.
 
 ## Prerequisites
 
@@ -248,6 +286,8 @@ internal/modem/           Modem interface and types
 internal/factory/         Driver factory
 internal/driver/mm/       ModemManager D-Bus driver (Linux)
 internal/driver/serial/   Direct AT serial driver
+internal/forward/         Forward channel interface, router, factory
+internal/forward/telegrambot/  Telegram Bot API driver
 config.example.yaml       Example configuration
 deploy/udev/              Optional udev rules for serial driver
 ```
@@ -255,10 +295,12 @@ deploy/udev/              Optional udev rules for serial driver
 ## Roadmap
 
 1. **PoC (done)** — `ping`, `status`, `messages`, `send`
-2. **Persist messages** — save ncoming SMS to SQLite (or another local DB); modem/SIM storage is limited and may not survive power-off
-3. SMS receive watcher — poll or subscribe (serial URCs / MM Messaging D-Bus) and ingest new messages into local storage
-4. HTTP/API gateway — expose SMS to other services
-5. systemd unit — run as a service on Pi
+2. **Forward channels (done)** — pluggable channels, routing rules, `channel test`, `telegram_bot`
+3. **Persist messages** — save incoming SMS to SQLite; modem/SIM storage is limited and may not survive power-off
+4. SMS receive watcher — MM `Added` D-Bus signal → router → channels
+5. More channel drivers — `telegram_secret`, `email`, `sms`
+6. HTTP/API gateway — expose SMS to other services
+7. systemd unit — run as a service on Pi
 
 ## License
 

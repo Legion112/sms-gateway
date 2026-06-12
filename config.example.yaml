@@ -10,3 +10,49 @@ mm:
   modem_index: 0      # logical index (0 = first modem from mmcli -L); not the D-Bus path suffix
   # modem_path: /org/freedesktop/ModemManager1/Modem/1  # optional explicit D-Bus path
   timeout: 5s
+
+# --- Forwarding (optional) ---
+
+default_modem: ec25-main
+
+modems:
+  ec25-main:
+    driver: mm
+    mm:
+      modem_index: 0
+      timeout: 5s
+  ec25-backup:
+    driver: mm
+    mm:
+      modem_index: 1
+      timeout: 5s
+
+channels:
+  my-telegram:
+    driver: telegram_bot
+    telegram:
+      bot_token: ""              # prefer env SMS_GATEWAY_CHANNEL_MY_TELEGRAM_BOT_TOKEN
+      chat_id: 123456789         # private chat with your bot (send /start first)
+
+  backup-sms:
+    driver: sms                  # not implemented yet
+    sms:
+      modem: ec25-backup
+      number: "+1234567890"
+
+  ops-email:
+    driver: email                # not implemented yet
+    email:
+      smtp_host: smtp.example.com
+      to: ops@example.com
+
+forward_rules:
+  - name: bank-otp
+    modem: ec25-main
+    from: "+79001234567"
+    to: [my-telegram]
+
+  - name: sim1-default
+    modem: ec25-main
+    from: "*"
+    to: [my-telegram]

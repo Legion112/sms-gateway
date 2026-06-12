@@ -4,22 +4,22 @@ overview: Introduce a pluggable forward-channel architecture (like modem mm/seri
 todos:
   - id: forward-interface
     content: Add internal/forward Channel interface, InboundSMS payload type, and factory (telegram_bot + not-implemented stubs)
-    status: pending
+    status: completed
   - id: config-channels-rules
     content: Extend config with modems map, channels map, forward_rules; env secret overrides for tokens
-    status: pending
+    status: completed
   - id: telegram-bot-driver
     content: Implement telegram_bot channel driver (Bot API sendMessage + getMe health check)
-    status: pending
+    status: completed
   - id: router-schema
     content: Add internal/forward/router with rule matching (modem + from pattern, first-match wins) — unit tests only in phase 1
-    status: pending
+    status: completed
   - id: channel-test-cmd
     content: Add sms-gateway channel test <name> CLI to send debug message and validate config
-    status: pending
+    status: completed
   - id: docs-forwarding
     content: Update README and config.example.yaml with channel setup, security note, multi-modem rules examples
-    status: pending
+    status: completed
 isProject: false
 ---
 
