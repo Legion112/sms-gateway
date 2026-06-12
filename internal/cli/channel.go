@@ -11,8 +11,7 @@ import (
 )
 
 type channelTestFlags struct {
-	text  string
-	modem string
+	text string
 }
 
 func newChannelCmd(root *cmdutil.Flags) *cobra.Command {
@@ -32,7 +31,6 @@ func newChannelCmd(root *cmdutil.Flags) *cobra.Command {
 		},
 	}
 	testCmd.Flags().StringVar(&testFlags.text, "text", "sms-gateway channel test OK", "test message body")
-	testCmd.Flags().StringVar(&testFlags.modem, "modem", "", "modem name for synthetic payload (default: default_modem or ec25-main)")
 
 	cmd.AddCommand(testCmd)
 	return cmd
@@ -64,32 +62,7 @@ func runChannelTest(root *cmdutil.Flags, f channelTestFlags, channelName string)
 		return err
 	}
 
-	if tb := forward.TelegramBot(ch); tb != nil {
-		tb.SetTestTag(true)
-	}
-
-	modemName := f.modem
-	if modemName == "" {
-		modemName = cfg.DefaultModem
-	}
-	if modemName == "" && len(cfg.Modems) == 1 {
-		for name := range cfg.Modems {
-			modemName = name
-		}
-	}
-	if modemName == "" {
-		modemName = "test-modem"
-	}
-
-	msg := forward.InboundSMS{
-		Modem: modemName,
-		ID:    "test",
-		From:  "+10000000000",
-		Text:  f.text,
-		Time:  time.Now().Format("2006-01-02 15:04:05"),
-	}
-
-	if err := ch.Forward(ctx, msg); err != nil {
+	if err := ch.SendTest(ctx, f.text); err != nil {
 		cmdutil.PrintError("status: failed")
 		cmdutil.PrintError("channel: %s", channelName)
 		cmdutil.PrintError("error: %v", err)

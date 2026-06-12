@@ -16,6 +16,8 @@ type Channel interface {
 	Driver() string
 	Ping(ctx context.Context) error
 	Forward(ctx context.Context, msg InboundSMS) error
+	// SendTest delivers plain text (channel test CLI only).
+	SendTest(ctx context.Context, text string) error
 	Close() error
 }
 

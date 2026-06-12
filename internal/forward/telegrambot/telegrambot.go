@@ -31,7 +31,6 @@ type Channel struct {
 	name    string
 	chatID  int64
 	token   string
-	testTag bool
 	client  Client
 	baseURL string
 	verbose bool
@@ -85,13 +84,17 @@ func (c *Channel) Ping(ctx context.Context) error {
 
 // Forward sends a formatted SMS notification.
 func (c *Channel) Forward(ctx context.Context, msg SMSMessage) error {
-	body := formatMessage(msg, c.testTag)
-	if len(body) > maxMessageLen {
-		body = body[:maxMessageLen-3] + "..."
+	return c.SendText(ctx, formatMessage(msg))
+}
+
+// SendText sends a plain message as-is (used by channel test CLI).
+func (c *Channel) SendText(ctx context.Context, text string) error {
+	if len(text) > maxMessageLen {
+		text = text[:maxMessageLen-3] + "..."
 	}
 	payload := map[string]any{
 		"chat_id": c.chatID,
-		"text":    body,
+		"text":    text,
 	}
 	var resp apiResponse
 	if err := c.call(ctx, "sendMessage", payload, &resp); err != nil {
@@ -105,9 +108,6 @@ func (c *Channel) Forward(ctx context.Context, msg SMSMessage) error {
 
 func (c *Channel) Close() error { return nil }
 
-// SetTestTag prefixes messages with [Test].
-func (c *Channel) SetTestTag(v bool) { c.testTag = v }
-
 // SMSMessage is the inbound SMS payload for formatting.
 type SMSMessage struct {
 	From string
@@ -115,13 +115,9 @@ type SMSMessage struct {
 	Time string
 }
 
-func formatMessage(msg SMSMessage, test bool) string {
-	prefix := ""
-	if test {
-		prefix = "[Test] "
-	}
+func formatMessage(msg SMSMessage) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "%sSMS from %s\n", prefix, msg.From)
+	fmt.Fprintf(&b, "SMS from %s\n", msg.From)
 	if msg.Time != "" {
 		fmt.Fprintf(&b, "%s\n", msg.Time)
 	}

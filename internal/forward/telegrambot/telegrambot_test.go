@@ -35,8 +35,6 @@ func TestPingAndForward(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ch.SetTestTag(true)
-
 	ctx := context.Background()
 	if err := ch.Ping(ctx); err != nil {
 		t.Fatal(err)
@@ -48,7 +46,10 @@ func TestPingAndForward(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(calls) != 2 {
+	if err := ch.SendText(ctx, "plain test"); err != nil {
+		t.Fatal(err)
+	}
+	if len(calls) != 3 {
 		t.Fatalf("calls=%v", calls)
 	}
 }

@@ -22,12 +22,7 @@ func (a *telegramBotAdapter) Forward(ctx context.Context, msg InboundSMS) error 
 		Time: msg.Time,
 	})
 }
-func (a *telegramBotAdapter) Close() error { return a.inner.Close() }
-
-// TelegramBot returns the underlying telegram channel for test helpers.
-func TelegramBot(ch Channel) *telegrambot.Channel {
-	if a, ok := ch.(*telegramBotAdapter); ok {
-		return a.inner
-	}
-	return nil
+func (a *telegramBotAdapter) SendTest(ctx context.Context, text string) error {
+	return a.inner.SendText(ctx, text)
 }
+func (a *telegramBotAdapter) Close() error { return a.inner.Close() }

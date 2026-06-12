@@ -28,4 +28,8 @@ func (s *stubChannel) Forward(context.Context, InboundSMS) error {
 	return fmt.Errorf("%w: %s", ErrNotImplemented, s.driver)
 }
 
+func (s *stubChannel) SendTest(context.Context, string) error {
+	return fmt.Errorf("%w: %s", ErrNotImplemented, s.driver)
+}
+
 func (s *stubChannel) Close() error { return nil }
