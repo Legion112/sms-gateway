@@ -1,0 +1,14 @@
+[Unit]
+Description=SMS Gateway watch daemon (forward incoming SMS)
+After=network.target ModemManager.service
+Wants=ModemManager.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/sms-gateway-watch
+EnvironmentFile=-/etc/sms-gateway/env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

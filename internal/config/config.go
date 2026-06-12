@@ -30,6 +30,8 @@ type Config struct {
 	Modems       map[string]ModemEntry    `yaml:"modems"`
 	Channels     map[string]ChannelConfig `yaml:"channels"`
 	ForwardRules []ForwardRule            `yaml:"forward_rules"`
+	Storage      StorageConfig            `yaml:"storage"`
+	Watch        WatchConfig              `yaml:"watch"`
 	Verbose      bool                     `yaml:"-"`
 }
 
@@ -143,6 +145,7 @@ func loadFile(path string, cfg *Config) error {
 			Timeout    string `yaml:"timeout"`
 		} `yaml:"mm"`
 		forwardFile `yaml:",inline"`
+		watchFile   `yaml:",inline"`
 	}
 	if err := yaml.Unmarshal(data, &file); err != nil {
 		return fmt.Errorf("parse config: %w", err)
@@ -181,7 +184,10 @@ func loadFile(path string, cfg *Config) error {
 	if err := applyModemTimeouts(cfg.Modems); err != nil {
 		return err
 	}
-	return applyForwardingFile(&file.forwardFile, cfg)
+	if err := applyForwardingFile(&file.forwardFile, cfg); err != nil {
+		return err
+	}
+	return applyWatchFile(&file.watchFile, cfg)
 }
 
 func applyModemTimeouts(modems map[string]ModemEntry) error {

@@ -49,10 +49,19 @@ channels:
 forward_rules:
   - name: bank-otp
     modem: ec25-main
-    from: "+79001234567"
+    from: "+1234567890"
     to: [my-telegram]
 
   - name: sim1-default
     modem: ec25-main
     from: "*"
     to: [my-telegram]
+
+# --- Watch daemon (sms-gateway-watch) ---
+
+storage:
+  path: ./data/sms.db
+
+watch:
+  catch_up_on_start: true
+  serial_poll_interval: 10s

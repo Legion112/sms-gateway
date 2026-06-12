@@ -151,6 +151,38 @@ sms-gateway channel test my-telegram --text "Hello from Pi" -v
 
 **Security:** Bot API uses TLS to Telegram, but SMS text is **visible to Telegram** (cloud chat, not Secret Chat). For maximum privacy, a future `telegram_secret` driver is planned.
 
+### Watch daemon (`sms-gateway-watch`)
+
+Separate long-running binary: listen for incoming SMS on all `modems`, persist to SQLite, apply `forward_rules`, fan-out to `channels`.
+
+```bash
+go build -o bin/sms-gateway-watch ./cmd/sms-gateway-watch
+./bin/sms-gateway-watch -v
+```
+
+Requires `modems`, `channels`, `forward_rules`, and `storage.path` in config (see [`config.example.yaml`](config.example.yaml)).
+
+| Setting | Description |
+|---------|-------------|
+| `storage.path` | SQLite database for messages and delivery state |
+| `watch.catch_up_on_start` | Forward existing inbound SMS on startup |
+| `watch.serial_poll_interval` | Poll interval for `serial` modems (default 10s) |
+
+**Modem backends:**
+
+| Driver | Detection |
+|--------|-----------|
+| `mm` | ModemManager D-Bus `Messaging.Added` signal |
+| `serial` | Poll `ListMessages` (cannot run while MM holds the same port) |
+
+**systemd:**
+
+```bash
+sudo cp bin/sms-gateway-watch /usr/local/bin/
+sudo cp deploy/systemd/sms-gateway-watch.service /etc/systemd/system/
+sudo systemctl enable --now sms-gateway-watch
+```
+
 ## Prerequisites
 
 - Linux with Quectel USB drivers (`option`, `qmi_wwan`)
@@ -288,7 +320,11 @@ internal/driver/mm/       ModemManager D-Bus driver (Linux)
 internal/driver/serial/   Direct AT serial driver
 internal/forward/         Forward channel interface, router, factory
 internal/forward/telegrambot/  Telegram Bot API driver
+internal/storage/         SQLite message and delivery store
+internal/watch/           Watch daemon orchestration
+cmd/sms-gateway-watch/    Watch daemon binary
 config.example.yaml       Example configuration
+deploy/systemd/           systemd unit for watch daemon
 deploy/udev/              Optional udev rules for serial driver
 ```
 
@@ -296,11 +332,9 @@ deploy/udev/              Optional udev rules for serial driver
 
 1. **PoC (done)** — `ping`, `status`, `messages`, `send`
 2. **Forward channels (done)** — pluggable channels, routing rules, `channel test`, `telegram_bot`
-3. **Persist messages** — save incoming SMS to SQLite; modem/SIM storage is limited and may not survive power-off
-4. SMS receive watcher — MM `Added` D-Bus signal → router → channels
-5. More channel drivers — `telegram_secret`, `email`, `sms`
-6. HTTP/API gateway — expose SMS to other services
-7. systemd unit — run as a service on Pi
+3. **Watch daemon (done)** — `sms-gateway-watch`, SQLite persistence, MM D-Bus + serial poll
+4. More channel drivers — `telegram_secret`, `email`, `sms`
+5. HTTP/API gateway — expose SMS to other services
 
 ## License
 
