@@ -34,5 +34,6 @@ func init() {
 	rootCmd.AddCommand(newMessagesCmd(&rootFlags))
 	rootCmd.AddCommand(newSendCmd(&rootFlags))
 	rootCmd.AddCommand(newPortsCmd())
+	rootCmd.AddCommand(newModemsCmd(&rootFlags))
 	rootCmd.AddCommand(newChannelCmd(&rootFlags))
 }

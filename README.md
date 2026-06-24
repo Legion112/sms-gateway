@@ -5,7 +5,7 @@ SMS gateway for receiving SMS messages on Linux using a **Quectel EC25-EUX** LTE
 Single static binary with subcommands — ideal for headless Raspberry Pi deployment.
 
 ```bash
-go build -o bin/sms-gateway ./cmd/sms-gateway
+make
 ./bin/sms-gateway ping
 ./bin/sms-gateway status
 ./bin/sms-gateway ports
@@ -43,6 +43,7 @@ Forward channels (Telegram, email, SMS, …) implement `internal/forward.Channel
 | `status` | Show SIM and SMS readiness |
 | `messages` | List all SMS messages |
 | `send` | Send an SMS (`--number`, `--text`) |
+| `modems list` | List configured modems; `--discover` shows ModemManager indices |
 | `channel test` | Send a test message via a forward channel (e.g. Telegram) |
 | `ports` | List detected serial ports |
 
@@ -54,13 +55,28 @@ Global flags (all subcommands):
 -v, --verbose      Verbose logging
 ```
 
-Subcommand flags (`ping`, `status`):
+Subcommand flags (`ping`, `status`, `messages`, `send`):
 
 ```
+--modem string        Named modem from config modems map
 --device string       Serial device (serial driver only)
 --timeout duration    Command timeout
 --modem-index int     ModemManager modem index (mm driver only)
 ```
+
+### Multi-modem setups
+
+When the `modems` section is configured (see [`config.example.yaml`](config.example.yaml)), `ping`, `status`, and `messages` run against **all** configured modems by default. Use `--modem NAME` to target one modem.
+
+```bash
+./bin/sms-gateway ping                         # all modems
+./bin/sms-gateway status --modem ec25-main     # one modem
+./bin/sms-gateway modems list --discover       # help map mmcli indices to config
+```
+
+For `send`, specify `--modem` when multiple modems are configured (or set `default_modem` in config).
+
+Without a `modems` section, commands use the legacy top-level `driver` / `mm` / `serial` settings (single modem).
 
 ## Hardware
 
@@ -113,6 +129,7 @@ mm:
 | Serial device | `serial.device` | `MODEM_DEVICE` | `--device` |
 | Timeout | `serial.timeout` / `mm.timeout` | `MODEM_TIMEOUT` | `--timeout` |
 | MM modem index | `mm.modem_index` | `MODEM_INDEX` | `--modem-index` |
+| Named modem | `modems.<name>` | — | `--modem` |
 
 Config search order: `--config` path → `./config.yaml` → `/etc/sms-gateway/config.yaml` (skipped if missing).
 

@@ -20,18 +20,33 @@ func newPingCmd(flags *cmdutil.Flags) *cobra.Command {
 }
 
 func runPing(flags cmdutil.Flags) error {
-	cfg, m, err := cmdutil.OpenModem(flags)
+	_, targets, err := cmdutil.OpenModemTargets(flags)
 	if err != nil {
 		return cmdutil.NewCLIError(cmdutil.ExitSetup, fmt.Sprintf("error: %v", err))
 	}
-	defer m.Close()
+	defer closeModems(targets)
 
-	ctx, cancel := cmdutil.Context(cfg)
+	multi := len(targets) > 1
+	var firstErr error
+	for i, target := range targets {
+		if i > 0 {
+			fmt.Println()
+		}
+		cmdutil.PrintSection(target.Name, multi)
+		if err := pingOne(target); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func pingOne(target cmdutil.ModemHandle) error {
+	ctx, cancel := cmdutil.Context(target.Config)
 	defer cancel()
 
-	result, err := m.Ping(ctx)
+	result, err := target.Modem.Ping(ctx)
 	if err != nil {
-		fmt.Printf("driver: %s\n", cfg.Driver)
+		fmt.Printf("driver: %s\n", target.Config.Driver)
 		if result.Device != "" {
 			fmt.Printf("device: %s\n", result.Device)
 		}

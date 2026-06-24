@@ -27,24 +27,30 @@ func newSendCmd(flags *cmdutil.Flags) *cobra.Command {
 }
 
 func runSend(flags cmdutil.Flags, number, text string) error {
-	cfg, m, err := cmdutil.OpenModem(flags)
+	target, err := cmdutil.OpenSendModem(flags)
 	if err != nil {
 		return cmdutil.NewCLIError(cmdutil.ExitSetup, fmt.Sprintf("error: %v", err))
 	}
-	defer m.Close()
+	defer target.Modem.Close()
 
-	ctx, cancel := cmdutil.SendContext(cfg)
+	ctx, cancel := cmdutil.SendContext(target.Config)
 	defer cancel()
 
-	result, err := m.SendMessage(ctx, number, text)
+	result, err := target.Modem.SendMessage(ctx, number, text)
 	if err != nil {
-		fmt.Printf("driver: %s\n", cfg.Driver)
+		fmt.Printf("driver: %s\n", target.Config.Driver)
+		if target.Name != "" {
+			fmt.Printf("modem_name: %s\n", target.Name)
+		}
 		fmt.Printf("to: %s\n", number)
 		fmt.Printf("status: failed\n")
 		return cmdutil.NewCLIError(cmdutil.ExitModem, fmt.Sprintf("error: %v", err))
 	}
 
-	fmt.Printf("driver: %s\n", cfg.Driver)
+	fmt.Printf("driver: %s\n", target.Config.Driver)
+	if target.Name != "" {
+		fmt.Printf("modem_name: %s\n", target.Name)
+	}
 	fmt.Printf("status: ok\n")
 	fmt.Printf("to: %s\n", result.To)
 	if result.ID != "" {

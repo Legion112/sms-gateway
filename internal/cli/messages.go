@@ -21,21 +21,36 @@ func newMessagesCmd(flags *cmdutil.Flags) *cobra.Command {
 }
 
 func runMessages(flags cmdutil.Flags) error {
-	cfg, m, err := cmdutil.OpenModem(flags)
+	_, targets, err := cmdutil.OpenModemTargets(flags)
 	if err != nil {
 		return cmdutil.NewCLIError(cmdutil.ExitSetup, fmt.Sprintf("error: %v", err))
 	}
-	defer m.Close()
+	defer closeModems(targets)
 
-	ctx, cancel := cmdutil.SMSContext(cfg)
+	multi := len(targets) > 1
+	var firstErr error
+	for i, target := range targets {
+		if i > 0 {
+			fmt.Println()
+		}
+		cmdutil.PrintSection(target.Name, multi)
+		if err := messagesOne(target); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func messagesOne(target cmdutil.ModemHandle) error {
+	ctx, cancel := cmdutil.SMSContext(target.Config)
 	defer cancel()
 
-	messages, err := m.ListMessages(ctx)
+	messages, err := target.Modem.ListMessages(ctx)
 	if err != nil {
 		return cmdutil.NewCLIError(cmdutil.ExitModem, fmt.Sprintf("error: %v", err))
 	}
 
-	fmt.Printf("driver: %s\n", cfg.Driver)
+	fmt.Printf("driver: %s\n", target.Config.Driver)
 	fmt.Printf("count: %d\n", len(messages))
 	if len(messages) == 0 {
 		return nil
@@ -69,5 +84,11 @@ func printMessage(msg modem.Message) {
 	}
 	if msg.Text != "" {
 		fmt.Printf("text: %s\n", msg.Text)
+	}
+}
+
+func closeModems(targets []cmdutil.ModemHandle) {
+	for _, t := range targets {
+		_ = t.Modem.Close()
 	}
 }

@@ -46,6 +46,7 @@ func BindPersistentFlags(cmd *cobra.Command, f *Flags) {
 
 // BindModemFlags attaches per-command modem flags.
 func BindModemFlags(cmd *cobra.Command, f *Flags) {
+	cmd.Flags().StringVar(&f.Modem, "modem", "", "named modem from config modems map")
 	cmd.Flags().StringVar(&f.Device, "device", "", "serial device (serial driver only)")
 	cmd.Flags().DurationVar(&f.Timeout, "timeout", 0, "command timeout")
 	cmd.Flags().IntVar(&f.ModemIndex, "modem-index", -1, "ModemManager modem index (mm driver only)")

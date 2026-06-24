@@ -20,18 +20,33 @@ func newStatusCmd(flags *cmdutil.Flags) *cobra.Command {
 }
 
 func runStatus(flags cmdutil.Flags) error {
-	cfg, m, err := cmdutil.OpenModem(flags)
+	_, targets, err := cmdutil.OpenModemTargets(flags)
 	if err != nil {
 		return cmdutil.NewCLIError(cmdutil.ExitSetup, fmt.Sprintf("error: %v", err))
 	}
-	defer m.Close()
+	defer closeModems(targets)
 
-	ctx, cancel := cmdutil.SMSContext(cfg)
+	multi := len(targets) > 1
+	var firstErr error
+	for i, target := range targets {
+		if i > 0 {
+			fmt.Println()
+		}
+		cmdutil.PrintSection(target.Name, multi)
+		if err := statusOne(target); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func statusOne(target cmdutil.ModemHandle) error {
+	ctx, cancel := cmdutil.SMSContext(target.Config)
 	defer cancel()
 
-	status, err := m.SMSStatus(ctx)
+	status, err := target.Modem.SMSStatus(ctx)
 	if err != nil {
-		fmt.Printf("driver: %s\n", cfg.Driver)
+		fmt.Printf("driver: %s\n", target.Config.Driver)
 		if status.Device != "" {
 			fmt.Printf("device: %s\n", status.Device)
 		}

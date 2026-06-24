@@ -1,4 +1,6 @@
 # Copy to config.yaml or /etc/sms-gateway/config.yaml
+#
+# Legacy single-modem CLI settings (used when modems: is not configured):
 driver: mm   # mm | serial
 
 serial:
@@ -11,7 +13,7 @@ mm:
   # modem_path: /org/freedesktop/ModemManager1/Modem/1  # optional explicit D-Bus path
   timeout: 5s
 
-# --- Forwarding (optional) ---
+# --- Multi-modem (recommended when more than one SIM/modem) ---
 
 default_modem: ec25-main
 
