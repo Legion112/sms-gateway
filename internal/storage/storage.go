@@ -43,6 +43,11 @@ type Store struct {
 	db *sql.DB
 }
 
+// MessageKey returns the storage primary key for a modem-local message index.
+func MessageKey(modem, id string) string {
+	return modem + ":" + id
+}
+
 // Open opens or creates the SQLite database at path.
 func Open(path string) (*Store, error) {
 	if path != "" && path != ":memory:" {
@@ -52,6 +57,7 @@ func Open(path string) (*Store, error) {
 				return nil, fmt.Errorf("create storage dir: %w", err)
 			}
 		}
+		path = path + "?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
@@ -61,7 +67,21 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate schema: %w", err)
 	}
-	return &Store{db: db}, nil
+	for _, pragma := range []string{
+		"PRAGMA busy_timeout = 5000",
+		"PRAGMA journal_mode = WAL",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			_ = db.Close()
+			return nil, fmt.Errorf("%s: %w", pragma, err)
+		}
+	}
+	store := &Store{db: db}
+	if err := store.migrateLegacyIDs(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	return store, nil
 }
 
 // Close closes the database.
@@ -145,4 +165,36 @@ func (s *Store) ListMessageIDs(modem string) ([]string, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+func (s *Store) migrateLegacyIDs() error {
+	var legacy int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM messages WHERE instr(id, ':') = 0`).Scan(&legacy); err != nil {
+		return err
+	}
+	if legacy == 0 {
+		return nil
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.Exec(
+		`UPDATE deliveries
+		 SET message_id = (
+		   SELECT m.modem || ':' || m.id FROM messages m
+		   WHERE m.id = deliveries.message_id LIMIT 1
+		 )
+		 WHERE instr(message_id, ':') = 0`,
+	); err != nil {
+		return fmt.Errorf("migrate delivery ids: %w", err)
+	}
+	if _, err := tx.Exec(
+		`UPDATE messages SET id = modem || ':' || id WHERE instr(id, ':') = 0`,
+	); err != nil {
+		return fmt.Errorf("migrate message ids: %w", err)
+	}
+	return tx.Commit()
 }

@@ -26,6 +26,42 @@ func (m *mockChannel) Forward(context.Context, forward.InboundSMS) error {
 func (m *mockChannel) SendTest(context.Context, string) error { return nil }
 func (m *mockChannel) Close() error                           { return nil }
 
+func TestIngestDifferentModemsSameIndex(t *testing.T) {
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ch := &mockChannel{}
+	cfg := config.Config{
+		Modems: map[string]config.ModemEntry{
+			"m1": {Driver: config.DriverMM},
+			"m2": {Driver: config.DriverMM},
+		},
+	}
+	router := forward.NewRouter([]config.ForwardRule{
+		{Name: "all", From: "*", To: []string{"tg"}},
+	})
+	svc := NewService(cfg, Dependencies{
+		Store:    store,
+		Router:   router,
+		Channels: map[string]forward.Channel{"tg": ch},
+		Log:      func(string, ...any) {},
+	})
+
+	ctx := context.Background()
+	if err := svc.ingest(ctx, "m1", modem.Message{ID: "0", From: "+1", Text: "a", State: "received"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ingest(ctx, "m2", modem.Message{ID: "0", From: "+2", Text: "b", State: "received"}); err != nil {
+		t.Fatal(err)
+	}
+	if ch.forwards != 2 {
+		t.Fatalf("forwards=%d want 2", ch.forwards)
+	}
+}
+
 func TestIngestForwardsOnce(t *testing.T) {
 	store, err := storage.Open(":memory:")
 	if err != nil {

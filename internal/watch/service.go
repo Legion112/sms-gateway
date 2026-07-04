@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/legion/sms-gateway/internal/config"
@@ -25,6 +27,7 @@ type Dependencies struct {
 type Service struct {
 	cfg  config.Config
 	deps Dependencies
+	mu   sync.Mutex
 }
 
 // NewService creates a watch service.
@@ -40,10 +43,17 @@ func (s *Service) Run(ctx context.Context) error {
 	if len(s.cfg.Modems) == 0 {
 		return fmt.Errorf("no modems configured")
 	}
+	if s.cfg.Watch.CatchUpOnStart {
+		for name, entry := range s.cfg.Modems {
+			if err := s.catchUpModem(ctx, name, entry); err != nil && ctx.Err() == nil {
+				s.deps.Log("catch-up modem %s: %v", name, err)
+			}
+		}
+	}
 	errCh := make(chan error, len(s.cfg.Modems))
 	for name, entry := range s.cfg.Modems {
 		go func(modemName string, modemEntry config.ModemEntry) {
-			errCh <- s.runModem(ctx, modemName, modemEntry)
+			errCh <- s.runModem(ctx, modemName, modemEntry, false)
 		}(name, entry)
 	}
 	var firstErr error
@@ -55,7 +65,16 @@ func (s *Service) Run(ctx context.Context) error {
 	return firstErr
 }
 
-func (s *Service) runModem(ctx context.Context, modemName string, entry config.ModemEntry) error {
+func (s *Service) catchUpModem(ctx context.Context, modemName string, entry config.ModemEntry) error {
+	m, err := factory.NewFromModemEntry(entry, s.cfg.Verbose)
+	if err != nil {
+		return fmt.Errorf("open: %w", err)
+	}
+	defer m.Close()
+	return s.catchUp(ctx, modemName, m)
+}
+
+func (s *Service) runModem(ctx context.Context, modemName string, entry config.ModemEntry, catchUp bool) error {
 	m, err := factory.NewFromModemEntry(entry, s.cfg.Verbose)
 	if err != nil {
 		return fmt.Errorf("modem %s: %w", modemName, err)
@@ -66,7 +85,7 @@ func (s *Service) runModem(ctx context.Context, modemName string, entry config.M
 		return s.ingest(ctx, modemName, msg)
 	}
 
-	if s.cfg.Watch.CatchUpOnStart {
+	if catchUp {
 		if err := s.catchUp(ctx, modemName, m); err != nil && ctx.Err() == nil {
 			s.deps.Log("catch-up modem %s: %v", modemName, err)
 		}
@@ -101,6 +120,10 @@ func (s *Service) catchUp(ctx context.Context, modemName string, m modem.Modem) 
 }
 
 func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Message) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	storageID := storage.MessageKey(modemName, msg.ID)
 	inbound := forward.InboundSMS{
 		Modem: modemName,
 		ID:    msg.ID,
@@ -113,7 +136,7 @@ func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Messag
 	}
 
 	inserted, err := s.deps.Store.InsertMessage(storage.Message{
-		ID:         inbound.ID,
+		ID:         storageID,
 		Modem:      inbound.Modem,
 		FromNumber: inbound.From,
 		Body:       inbound.Text,
@@ -133,7 +156,7 @@ func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Messag
 	}
 
 	for _, chName := range channelNames {
-		need, err := s.deps.Store.NeedsDelivery(inbound.ID, chName)
+		need, err := s.deps.Store.NeedsDelivery(storageID, chName)
 		if err != nil {
 			return err
 		}
@@ -148,14 +171,27 @@ func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Messag
 		err = ch.Forward(fwdCtx, inbound)
 		cancel()
 		if err != nil {
-			_ = s.deps.Store.MarkDeliveryFailed(inbound.ID, chName, err.Error())
-			s.deps.Log("delivery_failed modem=%s id=%s channel=%s rule=%s error=%v", modemName, msg.ID, chName, ruleName, err)
+			_ = s.deps.Store.MarkDeliveryFailed(storageID, chName, err.Error())
+			s.deps.Log("delivery_failed modem=%s id=%s channel=%s rule=%s error=%v", modemName, msg.ID, chName, ruleName, redactSecrets(err))
 			continue
 		}
-		if err := s.deps.Store.MarkDelivered(inbound.ID, chName); err != nil {
+		if err := s.deps.Store.MarkDelivered(storageID, chName); err != nil {
 			return err
 		}
 		s.deps.Log("forwarded modem=%s id=%s channel=%s rule=%s", modemName, msg.ID, chName, ruleName)
 	}
 	return nil
+}
+
+func redactSecrets(err error) error {
+	if err == nil {
+		return nil
+	}
+	s := err.Error()
+	if i := strings.Index(s, "/bot"); i >= 0 {
+		if j := strings.Index(s[i+4:], "/"); j >= 0 {
+			s = s[:i+4] + "<TOKEN>" + s[i+4+j:]
+		}
+	}
+	return fmt.Errorf("%s", s)
 }
