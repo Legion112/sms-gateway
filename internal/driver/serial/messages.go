@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/legion/sms-gateway/internal/modem"
+	"github.com/legion/sms-gateway/internal/smsencoding"
 )
 
 var cmglHeaderRe = regexp.MustCompile(`^\+CMGL:\s*(\d+),"([^"]*)","([^"]*)",[^,\n]*,(.+)$`)
@@ -48,7 +49,7 @@ func parseCMGL(response string) []modem.Message {
 			State:     cmglStatus(m[2]),
 			From:      m[3],
 			Timestamp: strings.Trim(m[4], `"`),
-			Text:      text,
+			Text:      smsencoding.DecodeText(text),
 			Storage:   "modem",
 		})
 	}
