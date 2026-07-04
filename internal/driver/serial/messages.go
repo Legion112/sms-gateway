@@ -9,7 +9,7 @@ import (
 	"github.com/legion/sms-gateway/internal/modem"
 )
 
-var cmglHeaderRe = regexp.MustCompile(`^\+CMGL:\s*(\d+),"([^"]*)","([^"]*)","[^"]*","([^"]*)"`)
+var cmglHeaderRe = regexp.MustCompile(`^\+CMGL:\s*(\d+),"([^"]*)","([^"]*)",[^,\n]*,(.+)$`)
 
 // ListMessages reads all stored SMS via AT+CMGL.
 func (d *Driver) ListMessages(ctx context.Context) ([]modem.Message, error) {
@@ -47,7 +47,7 @@ func parseCMGL(response string) []modem.Message {
 			ID:        m[1],
 			State:     cmglStatus(m[2]),
 			From:      m[3],
-			Timestamp: m[4],
+			Timestamp: strings.Trim(m[4], `"`),
 			Text:      text,
 			Storage:   "modem",
 		})
