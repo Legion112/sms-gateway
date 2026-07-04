@@ -158,6 +158,7 @@ Optional sections in [`config.example.yaml`](config.example.yaml):
 2. Open a chat with the bot and send `/start`.
 3. Get your `chat_id` (`curl "https://api.telegram.org/bot<TOKEN>/getUpdates"` after `/start`).
 4. Set token via env (recommended): `SMS_GATEWAY_CHANNEL_MY_TELEGRAM_BOT_TOKEN` or `SMS_GATEWAY_TELEGRAM_BOT_TOKEN`.
+5. Optional `telegram.proxy_url` (e.g. `socks5://127.0.0.1:1080`) when Bot API is blocked — use with SSH `-D` tunnel.
 
 **Test channel:**
 
@@ -202,13 +203,12 @@ sudo systemctl enable --now sms-gateway-watch
 
 ### Raspberry Pi (serial, no ModemManager)
 
-For a Pi without ModemManager (dual EC25 over USB), use [`deploy/config.pi.serial.yaml`](deploy/config.pi.serial.yaml). It maps two serial AT ports (`/dev/ttyUSB2`, `/dev/ttyUSB6`) and forwards **all** inbound SMS from **any** modem to `my-telegram` (rule with `from: "*"` and no `modem` field).
+Config lives on the Pi at `~/smsgateway/config.yaml` (not in git; excluded from `rsync`). Use serial driver for each modem in the `modems` map and a catch-all forward rule (`from: "*"`, no `modem` field).
 
-**Deploy from dev machine:**
+**Deploy code from dev machine:**
 
 ```bash
 rsync -avz --exclude='bin/' --exclude='config.yaml' ./ first_pi:~/smsgateway
-scp deploy/config.pi.serial.yaml first_pi:~/smsgateway/config.yaml
 ```
 
 **On the Pi:**
@@ -223,7 +223,16 @@ cd ~/smsgateway && make build
 ./bin/sms-gateway-watch -v
 ```
 
-If a port is **busy**, stop the watch daemon first (`pkill sms-gateway-watch`). If `ec25-main` fails on `/dev/ttyUSB2`, try `/dev/ttyUSB3` in config (second AT port on the first modem).
+If a port is **busy**, stop the watch daemon first (`pkill sms-gateway-watch`). If `ec25-main` fails on `/dev/ttyUSB2`, try `/dev/ttyUSB3` in config.
+
+### Telegram via SSH tunnel (Russia / blocked regions)
+
+When `api.telegram.org` is unreachable, route Bot API traffic through a SOCKS proxy created by SSH to an outside VPS.
+
+1. Create tunnel user on VPN and deploy key (see [`deploy/systemd/sms-tunnel.service`](deploy/systemd/sms-tunnel.service)).
+2. On Pi config, set `channels.my-telegram.telegram.proxy_url: socks5://127.0.0.1:1080`.
+3. Start tunnel: `sudo systemctl enable --now sms-tunnel` (or manual `ssh -N -D 127.0.0.1:1080 ...`).
+4. Env template: [`deploy/env.pi.example`](deploy/env.pi.example). Pi watch unit: [`deploy/systemd/sms-gateway-watch.pi.service`](deploy/systemd/sms-gateway-watch.pi.service).
 
 ## Prerequisites
 
@@ -366,7 +375,8 @@ internal/storage/         SQLite message and delivery store
 internal/watch/           Watch daemon orchestration
 cmd/sms-gateway-watch/    Watch daemon binary
 config.example.yaml       Example configuration
-deploy/systemd/           systemd unit for watch daemon
+deploy/env.pi.example     Pi env file template (bot token)
+deploy/systemd/           systemd units (watch daemon, SSH tunnel)
 deploy/udev/              Optional udev rules for serial driver
 ```
 

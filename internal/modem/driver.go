@@ -23,6 +23,7 @@ type SMSStatus struct {
 	Driver       Driver
 	Device       string
 	SimStatus    string
+	PhoneNumber  string
 	NetworkState string
 	ModemState   string
 	MessageStore string

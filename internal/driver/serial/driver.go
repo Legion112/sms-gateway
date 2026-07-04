@@ -60,13 +60,20 @@ func New(cfg config.SerialConfig, verbose bool) (modem.Modem, error) {
 	d.port = port
 	d.device = device
 	drainPort(port)
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.Timeout*4)
+	defer cancel()
+	if err := d.setup(ctx); err != nil && verbose {
+		logFn("serial setup: %v (continuing)", err)
+	}
+
 	return d, nil
 }
 
 // Ping sends AT and expects OK.
 func (d *Driver) Ping(ctx context.Context) (modem.PingResult, error) {
-	if _, err := d.exec(ctx, "ATE0"); err != nil {
-		return modem.PingResult{}, fmt.Errorf("disable echo: %w", err)
+	if err := d.setup(ctx); err != nil {
+		return modem.PingResult{}, fmt.Errorf("setup: %w", err)
 	}
 	if _, err := d.exec(ctx, "AT"); err != nil {
 		return modem.PingResult{}, err

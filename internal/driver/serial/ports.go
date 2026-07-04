@@ -8,7 +8,8 @@ import (
 )
 
 // ATPorts lists candidate AT ports for Quectel EC25 on Linux.
-var ATPorts = []string{"/dev/ttyUSB2", "/dev/ttyUSB3"}
+// First modem: ttyUSB2/3; second modem on same host: ttyUSB6/7.
+var ATPorts = []string{"/dev/ttyUSB2", "/dev/ttyUSB3", "/dev/ttyUSB6", "/dev/ttyUSB7"}
 
 // IsPortBusy reports whether a serial open error is caused by another process holding the port.
 func IsPortBusy(err error) bool {

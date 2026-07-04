@@ -71,6 +71,16 @@ func TestNewRequiresTokenAndChatID(t *testing.T) {
 	}
 }
 
+func TestNewRejectsInvalidProxyURL(t *testing.T) {
+	_, err := telegrambot.New("x", config.TelegramChannelConfig{
+		ChatID:   1,
+		ProxyURL: "://bad",
+	}, "token", false)
+	if err == nil || !strings.Contains(err.Error(), "proxy_url") {
+		t.Fatalf("err=%v", err)
+	}
+}
+
 func TestAPIError(t *testing.T) {
 	client := &http.Client{Transport: roundTripper(func(req *http.Request) (*http.Response, error) {
 		return jsonResp(`{"ok":false,"description":"bad token"}`), nil

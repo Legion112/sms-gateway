@@ -13,8 +13,8 @@ var cmglHeaderRe = regexp.MustCompile(`^\+CMGL:\s*(\d+),"([^"]*)","([^"]*)","[^"
 
 // ListMessages reads all stored SMS via AT+CMGL.
 func (d *Driver) ListMessages(ctx context.Context) ([]modem.Message, error) {
-	if _, err := d.exec(ctx, "ATE0"); err != nil {
-		return nil, fmt.Errorf("disable echo: %w", err)
+	if err := d.setup(ctx); err != nil {
+		return nil, fmt.Errorf("setup: %w", err)
 	}
 	if _, err := d.exec(ctx, "AT+CMGF=1"); err != nil {
 		return nil, fmt.Errorf("text mode: %w", err)

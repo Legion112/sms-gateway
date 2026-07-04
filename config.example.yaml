@@ -20,6 +20,9 @@ default_modem: ec25-main
 modems:
   ec25-main:
     driver: mm
+    # phone_number: "+79001234567"   # optional manual line number
+    # phone_number: "+998901234567"  # manual fallback when SIM/USSD cannot report MSISDN
+    # phone_ussd: "*148#"            # Beeline Uzbekistan own-number USSD (also *1001#)
     mm:
       modem_index: 0
       timeout: 5s
@@ -35,6 +38,7 @@ channels:
     telegram:
       bot_token: ""              # prefer env SMS_GATEWAY_CHANNEL_MY_TELEGRAM_BOT_TOKEN
       chat_id: 123456789         # private chat with your bot (send /start first)
+      # proxy_url: socks5://127.0.0.1:1080   # optional; SSH SOCKS tunnel when Telegram is blocked
 
   backup-sms:
     driver: sms                  # not implemented yet

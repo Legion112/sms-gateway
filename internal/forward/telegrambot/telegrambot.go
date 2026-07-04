@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -44,14 +45,30 @@ func New(name string, cfg config.TelegramChannelConfig, token string, verbose bo
 	if cfg.ChatID == 0 {
 		return nil, fmt.Errorf("telegram_bot %q: chat_id is required", name)
 	}
+	client, err := newHTTPClient(cfg.ProxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("telegram_bot %q: %w", name, err)
+	}
 	return &Channel{
 		name:    name,
 		chatID:  cfg.ChatID,
 		token:   token,
-		client:  &http.Client{Timeout: 30 * time.Second},
+		client:  client,
 		baseURL: defaultAPIBase,
 		verbose: verbose,
 	}, nil
+}
+
+func newHTTPClient(proxyURL string) (*http.Client, error) {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	if proxyURL != "" {
+		u, err := url.Parse(proxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("proxy_url: %w", err)
+		}
+		transport.Proxy = http.ProxyURL(u)
+	}
+	return &http.Client{Timeout: 30 * time.Second, Transport: transport}, nil
 }
 
 // NewWithClient creates a channel with a custom HTTP client (tests).

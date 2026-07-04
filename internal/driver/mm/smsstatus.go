@@ -20,7 +20,7 @@ const (
 // SMSStatus reads SIM and SMS state from ModemManager.
 func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 	props, err := d.getObjectProperties(ctx, d.modemPath, modemInterface, []string{
-		"State", "StateFailedReason", "UnlockRequired", "Sim",
+		"State", "StateFailedReason", "UnlockRequired", "Sim", "OwnNumbers",
 	})
 	if err != nil {
 		return modem.SMSStatus{}, err
@@ -74,6 +74,7 @@ func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 	}
 
 	ready := simStatus == "ready" && accessTechRegistered(state)
+	phoneNumber := firstOwnNumber(props["OwnNumbers"])
 	detail := strings.Join([]string{
 		fmt.Sprintf("sim=%s", simStatus),
 		fmt.Sprintf("modem=%s", modemState),
@@ -88,6 +89,7 @@ func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 		Driver:       modem.DriverMM,
 		Device:       string(d.modemPath),
 		SimStatus:    simStatus,
+		PhoneNumber:  phoneNumber,
 		NetworkState: networkState,
 		ModemState:   modemState,
 		MessageStore: messageStore,
@@ -200,5 +202,31 @@ func variantObjectPath(v dbus.Variant) dbus.ObjectPath {
 		return dbus.ObjectPath(p)
 	default:
 		return ""
+	}
+}
+
+func firstOwnNumber(v dbus.Variant) string {
+	for _, n := range variantStringSlice(v) {
+		if n != "" {
+			return n
+		}
+	}
+	return ""
+}
+
+func variantStringSlice(v dbus.Variant) []string {
+	switch s := v.Value().(type) {
+	case []string:
+		return s
+	case []interface{}:
+		out := make([]string, 0, len(s))
+		for _, item := range s {
+			if str, ok := item.(string); ok {
+				out = append(out, str)
+			}
+		}
+		return out
+	default:
+		return nil
 	}
 }

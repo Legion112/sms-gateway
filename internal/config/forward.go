@@ -9,9 +9,11 @@ import (
 
 // ModemEntry is one named modem (hardware access).
 type ModemEntry struct {
-	Driver string       `yaml:"driver"`
-	Serial SerialConfig `yaml:"serial"`
-	MM     MMConfig     `yaml:"mm"`
+	Driver      string       `yaml:"driver"`
+	PhoneNumber string       `yaml:"phone_number"`
+	PhoneUSSD   string       `yaml:"phone_ussd"`
+	Serial      SerialConfig `yaml:"serial"`
+	MM          MMConfig     `yaml:"mm"`
 }
 
 // ChannelConfig is one named forward destination.
@@ -26,6 +28,7 @@ type ChannelConfig struct {
 type TelegramChannelConfig struct {
 	BotToken string `yaml:"bot_token"`
 	ChatID   int64  `yaml:"chat_id"`
+	ProxyURL string `yaml:"proxy_url"`
 }
 
 // SMSChannelConfig holds sms forward channel settings (future).

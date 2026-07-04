@@ -24,8 +24,8 @@ func (d *Driver) SendMessage(ctx context.Context, number, text string) (modem.Se
 		return modem.SendResult{}, fmt.Errorf("text is required")
 	}
 
-	if _, err := d.exec(ctx, "ATE0"); err != nil {
-		return modem.SendResult{}, fmt.Errorf("disable echo: %w", err)
+	if err := d.setup(ctx); err != nil {
+		return modem.SendResult{}, fmt.Errorf("setup: %w", err)
 	}
 	if _, err := d.exec(ctx, "AT+CMGF=1"); err != nil {
 		return modem.SendResult{}, fmt.Errorf("text mode: %w", err)

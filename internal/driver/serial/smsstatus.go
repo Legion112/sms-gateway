@@ -10,8 +10,8 @@ import (
 
 // SMSStatus reads SIM and SMS storage state via AT commands.
 func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
-	if _, err := d.exec(ctx, "ATE0"); err != nil {
-		return modem.SMSStatus{}, fmt.Errorf("disable echo: %w", err)
+	if err := d.setup(ctx); err != nil {
+		return modem.SMSStatus{}, err
 	}
 
 	cpinResp, err := d.exec(ctx, "AT+CPIN?")
@@ -21,8 +21,22 @@ func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 	}
 	simStatus := simStatusLabel(simRaw)
 
+	cnumResp, _ := d.exec(ctx, "AT+CNUM")
+	phoneNumber := parseCNUM(cnumResp)
+
 	cregResp, _ := d.exec(ctx, "AT+CREG?")
-	networkState := parseCREG(cregResp)
+	cgregResp, _ := d.exec(ctx, "AT+CGREG?")
+	ceregResp, _ := d.exec(ctx, "AT+CEREG?")
+	cregState := parseCREG(cregResp)
+	cgregState := parseCGREG(cgregResp)
+	ceregState := parseCEREG(ceregResp)
+	networkState := bestNetworkState(cregState, cgregState, ceregState)
+
+	csqResp, _ := d.exec(ctx, "AT+CSQ")
+	signal := "unknown"
+	if rssi, ok := parseCSQ(csqResp); ok {
+		signal = csqLabel(rssi)
+	}
 
 	messageStore := "unknown"
 	messageCount := -1
@@ -34,15 +48,24 @@ func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 	}
 
 	ready := smsReady(simStatus, networkState)
-	detail := strings.Join([]string{
+	detailParts := []string{
 		fmt.Sprintf("sim=%s", simStatus),
 		fmt.Sprintf("network=%s", networkState),
-	}, ", ")
+		fmt.Sprintf("signal=%s", signal),
+	}
+	if cregState != networkState {
+		detailParts = append(detailParts, fmt.Sprintf("creg=%s", cregState))
+	}
+	if ceregState != networkState && ceregState != "unknown" {
+		detailParts = append(detailParts, fmt.Sprintf("cereg=%s", ceregState))
+	}
+	detail := strings.Join(detailParts, ", ")
 
 	return modem.SMSStatus{
 		Driver:       modem.DriverSerial,
 		Device:       d.device,
 		SimStatus:    simStatus,
+		PhoneNumber:  phoneNumber,
 		NetworkState: networkState,
 		ModemState:   "at",
 		MessageStore: messageStore,

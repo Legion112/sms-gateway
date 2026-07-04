@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/legion/sms-gateway/internal/cmdutil"
+	"github.com/legion/sms-gateway/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -20,7 +21,7 @@ func newStatusCmd(flags *cmdutil.Flags) *cobra.Command {
 }
 
 func runStatus(flags cmdutil.Flags) error {
-	_, targets, err := cmdutil.OpenModemTargets(flags)
+	base, targets, err := cmdutil.OpenModemTargets(flags)
 	if err != nil {
 		return cmdutil.NewCLIError(cmdutil.ExitSetup, fmt.Sprintf("error: %v", err))
 	}
@@ -33,14 +34,14 @@ func runStatus(flags cmdutil.Flags) error {
 			fmt.Println()
 		}
 		cmdutil.PrintSection(target.Name, multi)
-		if err := statusOne(target); err != nil && firstErr == nil {
+		if err := statusOne(base, target); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
 }
 
-func statusOne(target cmdutil.ModemHandle) error {
+func statusOne(base config.Config, target cmdutil.ModemHandle) error {
 	ctx, cancel := cmdutil.SMSContext(target.Config)
 	defer cancel()
 
@@ -54,9 +55,16 @@ func statusOne(target cmdutil.ModemHandle) error {
 		return cmdutil.NewCLIError(cmdutil.ExitModem, fmt.Sprintf("error: %v", err))
 	}
 
+	phone := cmdutil.ResolvePhoneNumber(ctx, base, target, status.PhoneNumber, status.NetworkState)
+
 	fmt.Printf("driver: %s\n", status.Driver)
 	fmt.Printf("device: %s\n", status.Device)
 	fmt.Printf("sim: %s\n", status.SimStatus)
+	if phone != "" {
+		fmt.Printf("phone: %s\n", phone)
+	} else {
+		fmt.Printf("phone: unknown\n")
+	}
 	fmt.Printf("modem: %s\n", status.ModemState)
 	fmt.Printf("network: %s\n", status.NetworkState)
 	fmt.Printf("messages: %s\n", status.MessageStore)
