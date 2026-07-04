@@ -123,7 +123,7 @@ func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Messag
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	storageID := storage.MessageKey(modemName, msg.ID)
+	storageID := storage.MessageKey(modemName, msg.ID, msg.Timestamp)
 	inbound := forward.InboundSMS{
 		Modem: modemName,
 		ID:    msg.ID,
@@ -134,6 +134,7 @@ func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Messag
 	if inbound.Time == "" {
 		inbound.Time = time.Now().Format("2006-01-02 15:04:05")
 	}
+	storageID = storage.MessageKey(modemName, msg.ID, inbound.Time)
 
 	inserted, err := s.deps.Store.InsertMessage(storage.Message{
 		ID:         storageID,
@@ -144,6 +145,22 @@ func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Messag
 	})
 	if err != nil {
 		return err
+	}
+	if !inserted {
+		if existing, ok, err := s.deps.Store.GetMessage(storageID); err != nil {
+			return err
+		} else if ok && (existing.Body != inbound.Text || existing.ReceivedAt != inbound.Time) {
+			if err := s.deps.Store.ReplaceMessage(storage.Message{
+				ID:         storageID,
+				Modem:      inbound.Modem,
+				FromNumber: inbound.From,
+				Body:       inbound.Text,
+				ReceivedAt: inbound.Time,
+			}); err != nil {
+				return err
+			}
+			s.deps.Log("replaced modem=%s id=%s from=%s (storage slot reused)", modemName, msg.ID, msg.From)
+		}
 	}
 	if inserted {
 		s.deps.Log("ingested modem=%s id=%s from=%s", modemName, msg.ID, msg.From)

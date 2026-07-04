@@ -43,9 +43,13 @@ type Store struct {
 	db *sql.DB
 }
 
-// MessageKey returns the storage primary key for a modem-local message index.
-func MessageKey(modem, id string) string {
-	return modem + ":" + id
+// MessageKey returns the storage primary key for a modem-local message.
+// Timestamp is included because modem storage indices are reused for new SMS.
+func MessageKey(modem, id, receivedAt string) string {
+	if receivedAt == "" {
+		return modem + ":" + id
+	}
+	return modem + ":" + id + ":" + receivedAt
 }
 
 // Open opens or creates the SQLite database at path.
@@ -108,6 +112,49 @@ func (s *Store) InsertMessage(msg Message) (bool, error) {
 		return false, err
 	}
 	return n > 0, nil
+}
+
+// ReplaceMessage updates an existing row and clears delivery state (modem index reused).
+func (s *Store) ReplaceMessage(msg Message) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.Exec(
+		`UPDATE messages SET from_number = ?, body = ?, received_at = ? WHERE id = ?`,
+		msg.FromNumber, msg.Body, msg.ReceivedAt, msg.ID,
+	)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return sql.ErrNoRows
+	}
+	if _, err := tx.Exec(`DELETE FROM deliveries WHERE message_id = ?`, msg.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// GetMessage returns a stored message by id.
+func (s *Store) GetMessage(id string) (Message, bool, error) {
+	var msg Message
+	err := s.db.QueryRow(
+		`SELECT id, modem, from_number, body, received_at FROM messages WHERE id = ?`, id,
+	).Scan(&msg.ID, &msg.Modem, &msg.FromNumber, &msg.Body, &msg.ReceivedAt)
+	if err == sql.ErrNoRows {
+		return Message{}, false, nil
+	}
+	if err != nil {
+		return Message{}, false, err
+	}
+	return msg, true, nil
 }
 
 // NeedsDelivery reports whether channel still needs a successful delivery for messageID.

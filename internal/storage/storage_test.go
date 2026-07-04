@@ -14,7 +14,7 @@ func TestInsertMessageIdempotent(t *testing.T) {
 	defer store.Close()
 
 	msg := storage.Message{
-		ID:         storage.MessageKey("ec25-main", "1"),
+		ID:         storage.MessageKey("ec25-main", "1", "2026-06-12T10:00:00Z"),
 		Modem:      "ec25-main",
 		FromNumber: "+79162821457",
 		Body:       "hello",
@@ -38,14 +38,14 @@ func TestInsertMessageSameIndexDifferentModems(t *testing.T) {
 	defer store.Close()
 
 	a := storage.Message{
-		ID:         storage.MessageKey("ec25-main", "0"),
+		ID:         storage.MessageKey("ec25-main", "0", "2026-06-12T10:00:00Z"),
 		Modem:      "ec25-main",
 		FromNumber: "+7999",
 		Body:       "main",
 		ReceivedAt: "2026-06-12T10:00:00Z",
 	}
 	b := storage.Message{
-		ID:         storage.MessageKey("ec25-backup", "0"),
+		ID:         storage.MessageKey("ec25-backup", "0", "2026-06-12T10:01:00Z"),
 		Modem:      "ec25-backup",
 		FromNumber: "MTS",
 		Body:       "backup",
@@ -56,6 +56,65 @@ func TestInsertMessageSameIndexDifferentModems(t *testing.T) {
 	}
 	if inserted, err := store.InsertMessage(b); err != nil || !inserted {
 		t.Fatalf("insert backup: inserted=%v err=%v", inserted, err)
+	}
+}
+
+func TestInsertMessageSameIndexDifferentTimestamps(t *testing.T) {
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	first := storage.Message{
+		ID:         storage.MessageKey("ec25-main", "37", "26/07/04,21:00:00+00"),
+		Modem:      "ec25-main",
+		FromNumber: "+7999",
+		Body:       "old text",
+		ReceivedAt: "26/07/04,21:00:00+00",
+	}
+	second := storage.Message{
+		ID:         storage.MessageKey("ec25-main", "37", "26/07/04,22:19:42+00"),
+		Modem:      "ec25-main",
+		FromNumber: "+7999",
+		Body:       "Another sms to me",
+		ReceivedAt: "26/07/04,22:19:42+00",
+	}
+	if inserted, err := store.InsertMessage(first); err != nil || !inserted {
+		t.Fatalf("insert first: inserted=%v err=%v", inserted, err)
+	}
+	if inserted, err := store.InsertMessage(second); err != nil || !inserted {
+		t.Fatalf("insert second: inserted=%v err=%v", inserted, err)
+	}
+}
+
+func TestReplaceMessageClearsDelivery(t *testing.T) {
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	id := storage.MessageKey("ec25-main", "37", "26/07/04,22:19:42+00")
+	msg := storage.Message{
+		ID: id, Modem: "ec25-main", FromNumber: "+7999",
+		Body: "old", ReceivedAt: "26/07/04,22:19:42+00",
+	}
+	if _, err := store.InsertMessage(msg); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDelivered(id, "tg"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ReplaceMessage(storage.Message{
+		ID: id, Modem: "ec25-main", FromNumber: "+7999",
+		Body: "I hope this one is last", ReceivedAt: "26/07/04,22:19:42+00",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	need, err := store.NeedsDelivery(id, "tg")
+	if err != nil || !need {
+		t.Fatalf("after replace need=%v err=%v", need, err)
 	}
 }
 
