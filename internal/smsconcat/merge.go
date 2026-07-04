@@ -77,7 +77,7 @@ func Merge(parts []Part) []modem.Message {
 			From:      first.From,
 			State:     first.State,
 			Timestamp: first.Timestamp,
-			Text:      b.String(),
+			Text:      trimMergedText(b.String()),
 			Storage:   first.Storage,
 			SMSC:      first.SMSC,
 		})
@@ -102,7 +102,7 @@ func partToMessage(p Part) modem.Message {
 		From:      p.From,
 		State:     p.State,
 		Timestamp: p.Timestamp,
-		Text:      p.Text,
+		Text:      trimMergedText(p.Text),
 		Storage:   p.Storage,
 		SMSC:      p.SMSC,
 	}
@@ -124,4 +124,8 @@ func messageIndex(id string) int {
 		return 1 << 30
 	}
 	return n
+}
+
+func trimMergedText(s string) string {
+	return strings.TrimRight(s, "\x00 \r\n")
 }

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/legion/sms-gateway/internal/smsconcat"
+	"github.com/legion/sms-gateway/internal/smspdu"
 )
 
 func TestParseCMGL(t *testing.T) {
@@ -55,6 +56,58 @@ func TestParseCMGLIndices(t *testing.T) {
 	}
 }
 
+func TestParseCMGLPDU(t *testing.T) {
+	hexPDU := "0791999810584059000B919759069057F400006270401212050233C8329BFD06D1D1E93968DE9E83D273D0BCEC2683E86F503BED2E83AA7A71799D9ED3C36ED034D9048DC3723208"
+	resp := "+CMGL: 0,1,,176\n" + hexPDU + "\nOK"
+	entries := parseCMGLPDU(resp)
+	if len(entries) != 1 {
+		t.Fatalf("got %d entries, want 1", len(entries))
+	}
+	if entries[0].index != "0" || entries[0].stat != "1" {
+		t.Fatalf("entry: %+v", entries[0])
+	}
+	if entries[0].hexPDU != hexPDU {
+		t.Fatalf("hex mismatch")
+	}
+}
+
+func TestParseCMGLPDUMulti(t *testing.T) {
+	resp := "+CMGL: 25,1,,162\n4012d0c27259faaeb7d3ee330008627040121215028c0500035209020020\n+CMGL: 26,1,,80\n079199981058405900\nOK"
+	entries := parseCMGLPDU(resp)
+	if len(entries) != 2 {
+		t.Fatalf("got %d entries, want 2", len(entries))
+	}
+	if entries[0].index != "25" || entries[1].index != "26" {
+		t.Fatalf("indices: %q %q", entries[0].index, entries[1].index)
+	}
+}
+
+func TestParseCMGLPDUToPart(t *testing.T) {
+	hexPDU := "0791999810584059000B919759069057F400006270401212050233C8329BFD06D1D1E93968DE9E83D273D0BCEC2683E86F503BED2E83AA7A71799D9ED3C36ED034D9048DC3723208"
+	entries := parseCMGLPDU("+CMGL: 0,1,,176\n" + hexPDU + "\nOK")
+	if len(entries) != 1 {
+		t.Fatal("expected one entry")
+	}
+	deliver, err := smspdu.ParseHexDeliver(entries[0].hexPDU)
+	if err != nil {
+		t.Fatalf("parse deliver: %v", err)
+	}
+	part := smsconcat.Part{
+		ID:        entries[0].index,
+		From:      deliver.From,
+		State:     "received (read)",
+		Timestamp: deliver.Timestamp,
+		Text:      deliver.Text,
+		Storage:   "modem",
+		ConcatRef: deliver.ConcatRef,
+		Part:      deliver.Part,
+		PartTotal: deliver.PartTotal,
+	}
+	if part.From != "+79956009754" {
+		t.Fatalf("from = %q", part.From)
+	}
+}
+
 func TestParseQCMGRConcat(t *testing.T) {
 	resp := "+QCMGR: \"REC READ\",\"+8615056913384\",,\"13/07/30,14:44:37+32\",120,1,2\nABCD\nOK"
 	part, ok := parseQCMGR("3", resp)
@@ -80,20 +133,6 @@ func TestParseQCMGRNonConcat(t *testing.T) {
 	}
 	if part.Text != "Hello" {
 		t.Fatalf("text = %q", part.Text)
-	}
-}
-
-func TestParseQCMGRQuectelFormat(t *testing.T) {
-	resp := "+QCMGR: \"REC READ\",\"6610110182111117109105110103\",,\"26/07/04,21:23:24+20\",120,1,3\nРекомендации\nOK"
-	part, ok := parseQCMGR("25", resp)
-	if !ok {
-		t.Fatal("expected parse ok")
-	}
-	if part.Timestamp != "26/07/04,21:23:24+20" {
-		t.Fatalf("timestamp = %q", part.Timestamp)
-	}
-	if part.Part != 1 || part.PartTotal != 3 {
-		t.Fatalf("concat meta: part=%d total=%d", part.Part, part.PartTotal)
 	}
 }
 

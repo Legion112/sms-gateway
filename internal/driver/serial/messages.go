@@ -10,18 +10,128 @@ import (
 	"github.com/legion/sms-gateway/internal/modem"
 	"github.com/legion/sms-gateway/internal/smsconcat"
 	"github.com/legion/sms-gateway/internal/smsencoding"
+	"github.com/legion/sms-gateway/internal/smspdu"
 )
 
 var (
-	cmglHeaderRe  = regexp.MustCompile(`^\+CMGL:\s*(\d+),"([^"]*)","([^"]*)",[^,\n]*,(.+)$`)
-	qcmgrHeaderRe = regexp.MustCompile(`^\+QCMGR:\s*"([^"]*)","([^"]*)",[^,\n]*,(.+)$`)
+	cmglHeaderRe    = regexp.MustCompile(`^\+CMGL:\s*(\d+),"([^"]*)","([^"]*)",[^,\n]*,(.+)$`)
+	cmglPDUHeaderRe = regexp.MustCompile(`^\+CMGL:\s*(\d+),(\d+),,(\d+)\s*$`)
+	qcmgrHeaderRe   = regexp.MustCompile(`^\+QCMGR:\s*"([^"]*)","([^"]*)",[^,\n]*,(.+)$`)
 )
 
-// ListMessages reads all stored SMS via AT+CMGL and AT+QCMGR (concat metadata).
+// ListMessages reads stored SMS via PDU-mode CMGL, falling back to text-mode QCMGR.
 func (d *Driver) ListMessages(ctx context.Context) ([]modem.Message, error) {
 	if err := d.setup(ctx); err != nil {
 		return nil, fmt.Errorf("setup: %w", err)
 	}
+
+	parts, err := d.listPDUParts(ctx)
+	if err == nil {
+		return smsconcat.Merge(parts), nil
+	}
+	if err != nil && d.verbose {
+		d.log("pdu list failed: %v, falling back to text mode", err)
+	}
+
+	return d.listMessagesText(ctx)
+}
+
+func (d *Driver) listPDUParts(ctx context.Context) ([]smsconcat.Part, error) {
+	if _, err := d.exec(ctx, "AT+CMGF=0"); err != nil {
+		return nil, fmt.Errorf("pdu mode: %w", err)
+	}
+	defer func() {
+		restoreCtx, cancel := context.WithTimeout(context.Background(), d.timeout*2)
+		defer cancel()
+		if _, err := d.exec(restoreCtx, "AT+CMGF=1"); err != nil && d.verbose {
+			d.log("restore text mode: %v", err)
+		}
+	}()
+
+	var parts []smsconcat.Part
+	for stat, state := range map[int]string{0: "received (unread)", 1: "received (read)"} {
+		statParts, err := d.listPDUPartsByStat(ctx, stat, state)
+		if err != nil {
+			return nil, err
+		}
+		parts = append(parts, statParts...)
+	}
+	return parts, nil
+}
+
+func (d *Driver) listPDUPartsByStat(ctx context.Context, stat int, state string) ([]smsconcat.Part, error) {
+	resp, err := d.exec(ctx, fmt.Sprintf("AT+CMGL=%d", stat))
+	if err != nil {
+		return nil, fmt.Errorf("cmgl stat %d: %w", stat, err)
+	}
+	entries := parseCMGLPDU(resp)
+	parts := make([]smsconcat.Part, 0, len(entries))
+	for _, entry := range entries {
+		deliver, err := smspdu.ParseHexDeliver(entry.hexPDU)
+		if err != nil {
+			return nil, fmt.Errorf("parse pdu index %s: %w", entry.index, err)
+		}
+		parts = append(parts, smsconcat.Part{
+			ID:        entry.index,
+			From:      deliver.From,
+			State:     state,
+			Timestamp: deliver.Timestamp,
+			Text:      deliver.Text,
+			Storage:   "modem",
+			ConcatRef: deliver.ConcatRef,
+			Part:      deliver.Part,
+			PartTotal: deliver.PartTotal,
+		})
+	}
+	return parts, nil
+}
+
+type cmglPDUEntry struct {
+	index  string
+	stat   string
+	length int
+	hexPDU string
+}
+
+func parseCMGLPDU(response string) []cmglPDUEntry {
+	lines := strings.Split(response, "\n")
+	var entries []cmglPDUEntry
+	for i := 0; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		m := cmglPDUHeaderRe.FindStringSubmatch(line)
+		if len(m) != 4 {
+			continue
+		}
+		length, _ := strconv.Atoi(m[3])
+		if i+1 >= len(lines) {
+			continue
+		}
+		hexLine := strings.Map(func(r rune) rune {
+			switch {
+			case r >= '0' && r <= '9', r >= 'a' && r <= 'f', r >= 'A' && r <= 'F':
+				return r
+			default:
+				return -1
+			}
+		}, strings.TrimSpace(lines[i+1]))
+		if hexLine == "" {
+			continue
+		}
+		if length > 0 && len(hexLine) != length*2 {
+			// Some modems report TPDU length; accept the hex line we got.
+		}
+		entries = append(entries, cmglPDUEntry{
+			index:  m[1],
+			stat:   m[2],
+			length: length,
+			hexPDU: hexLine,
+		})
+		i++
+	}
+	return entries
+}
+
+func (d *Driver) listMessagesText(ctx context.Context) ([]modem.Message, error) {
 	if _, err := d.exec(ctx, "AT+CMGF=1"); err != nil {
 		return nil, fmt.Errorf("text mode: %w", err)
 	}
@@ -154,9 +264,9 @@ func parseCMGL(response string) []modem.Message {
 
 func cmglStatus(raw string) string {
 	switch strings.ToUpper(raw) {
-	case "REC UNREAD":
+	case "REC UNREAD", "0":
 		return "received (unread)"
-	case "REC READ":
+	case "REC READ", "1":
 		return "received (read)"
 	case "STO UNSENT":
 		return "stored (unsent)"

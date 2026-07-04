@@ -1,0 +1,16 @@
+[Unit]
+Description=SMS Gateway watch daemon (forward incoming SMS)
+After=network-online.target sms-tunnel.service
+Wants=network-online.target
+Requires=sms-tunnel.service
+
+[Service]
+Type=simple
+WorkingDirectory=/home/legion/smsgateway
+ExecStart=/home/legion/smsgateway/bin/sms-gateway-watch
+EnvironmentFile=-/etc/sms-gateway/env
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
