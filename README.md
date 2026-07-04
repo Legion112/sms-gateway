@@ -200,6 +200,31 @@ sudo cp deploy/systemd/sms-gateway-watch.service /etc/systemd/system/
 sudo systemctl enable --now sms-gateway-watch
 ```
 
+### Raspberry Pi (serial, no ModemManager)
+
+For a Pi without ModemManager (dual EC25 over USB), use [`deploy/config.pi.serial.yaml`](deploy/config.pi.serial.yaml). It maps two serial AT ports (`/dev/ttyUSB2`, `/dev/ttyUSB6`) and forwards **all** inbound SMS from **any** modem to `my-telegram` (rule with `from: "*"` and no `modem` field).
+
+**Deploy from dev machine:**
+
+```bash
+rsync -avz --exclude='bin/' --exclude='config.yaml' ./ first_pi:~/smsgateway
+scp deploy/config.pi.serial.yaml first_pi:~/smsgateway/config.yaml
+```
+
+**On the Pi:**
+
+```bash
+export SMS_GATEWAY_CHANNEL_MY_TELEGRAM_BOT_TOKEN=your-token-here
+cd ~/smsgateway && make build
+
+./bin/sms-gateway ping --modem ec25-main
+./bin/sms-gateway ping --modem ec25-backup
+./bin/sms-gateway channel test my-telegram --text "Pi serial OK"
+./bin/sms-gateway-watch -v
+```
+
+If a port is **busy**, stop the watch daemon first (`pkill sms-gateway-watch`). If `ec25-main` fails on `/dev/ttyUSB2`, try `/dev/ttyUSB3` in config (second AT port on the first modem).
+
 ## Prerequisites
 
 - Linux with Quectel USB drivers (`option`, `qmi_wwan`)

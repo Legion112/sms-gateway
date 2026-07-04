@@ -11,3 +11,5 @@ $(BIN_DIR)/%: cmd/%/main.go
 
 clean:
 	rm -rf $(BIN_DIR)
+deploy_pi:
+	rsync -avz --exclude='bin/' --exclude='config.yaml'  ./ first_pi:~/smsgateway
