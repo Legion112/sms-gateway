@@ -33,6 +33,19 @@ func TestParseInternational(t *testing.T) {
 	}
 }
 
+func TestParseBeelineConcatUCS2Fixture(t *testing.T) {
+	d, err := ParseHexDeliver(loadFixture(t, "beeline_concat_ucs2_part2.hex"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if d.ConcatRef != 82 || d.Part != 2 || d.PartTotal != 9 {
+		t.Fatalf("concat ref=%d part=%d total=%d", d.ConcatRef, d.Part, d.PartTotal)
+	}
+	if d.From != "BeeRouming" {
+		t.Fatalf("from = %q", d.From)
+	}
+}
+
 func TestParseConcatUCS2(t *testing.T) {
 	d, err := ParseHexDeliver(loadFixture(t, "msg1_concat_ucs2.hex"))
 	if err != nil {

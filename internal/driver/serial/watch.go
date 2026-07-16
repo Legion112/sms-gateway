@@ -5,10 +5,29 @@ import (
 	"time"
 
 	"github.com/legion/sms-gateway/internal/modem"
+	"github.com/legion/sms-gateway/internal/smsconcat"
 )
 
-// WatchIncoming polls the modem for new inbound SMS messages.
+// WatchIncoming polls the modem for new inbound SMS message parts.
 func (d *Driver) WatchIncoming(ctx context.Context, interval time.Duration, handler modem.IncomingHandler) error {
+	return d.WatchIncomingParts(ctx, interval, func(ctx context.Context, parts []modem.Part) error {
+		for _, part := range parts {
+			if !modem.IsInbound(part.State) {
+				continue
+			}
+			if err := handler(ctx, smsconcat.PartToMessage(part)); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// PartsHandler is called for each poll with raw SMS segments.
+type PartsHandler func(ctx context.Context, parts []modem.Part) error
+
+// WatchIncomingParts polls the modem and delivers raw segments (including concat metadata).
+func (d *Driver) WatchIncomingParts(ctx context.Context, interval time.Duration, handler PartsHandler) error {
 	if interval <= 0 {
 		interval = 10 * time.Second
 	}
@@ -17,20 +36,12 @@ func (d *Driver) WatchIncoming(ctx context.Context, interval time.Duration, hand
 
 	poll := func() error {
 		listCtx, cancel := context.WithTimeout(ctx, d.timeout*2)
-		msgs, err := d.ListMessages(listCtx)
+		parts, err := d.ListMessageParts(listCtx)
 		cancel()
 		if err != nil {
 			return err
 		}
-		for _, msg := range msgs {
-			if !modem.IsInbound(msg.State) {
-				continue
-			}
-			if err := handler(ctx, msg); err != nil {
-				return err
-			}
-		}
-		return nil
+		return handler(ctx, parts)
 	}
 
 	if err := poll(); err != nil {

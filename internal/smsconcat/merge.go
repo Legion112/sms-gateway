@@ -1,6 +1,7 @@
 package smsconcat
 
 import (
+	"fmt"
 	"sort"
 	"strconv"
 	"strings"
@@ -9,17 +10,67 @@ import (
 )
 
 // Part is one SMS segment, optionally part of a concatenated message.
-type Part struct {
-	ID        string
+type Part = modem.Part
+
+// GroupKey identifies a concatenated SMS group.
+type GroupKey struct {
 	From      string
-	State     string
-	Timestamp string
-	Text      string
-	Storage   string
-	SMSC      string
 	ConcatRef int
-	Part      int // 1-based segment number; 0 if not concatenated
 	PartTotal int
+}
+
+// GroupKeyFromPart returns the concat group key for a part.
+func GroupKeyFromPart(p Part) GroupKey {
+	return GroupKey{From: p.From, ConcatRef: p.ConcatRef, PartTotal: p.PartTotal}
+}
+
+// IsConcat reports whether part is a segment of a multi-part SMS.
+func IsConcat(p Part) bool {
+	return p.PartTotal >= 2 && p.Part >= 1
+}
+
+// PartToMessage converts a non-concat part to modem.Message.
+func PartToMessage(p Part) modem.Message {
+	return partToMessage(p)
+}
+
+// MergeGroup merges an ordered set of parts from the same concat group.
+func MergeGroup(segs []Part) modem.Message {
+	if len(segs) == 0 {
+		return modem.Message{}
+	}
+	msgs := Merge(segs)
+	if len(msgs) == 1 {
+		return msgs[0]
+	}
+	var b strings.Builder
+	for _, p := range segs {
+		b.WriteString(p.Text)
+	}
+	first := segs[0]
+	return modem.Message{
+		ID:        lowestID(segs),
+		From:      first.From,
+		State:     first.State,
+		Timestamp: first.Timestamp,
+		Text:      trimMergedText(b.String()),
+		Storage:   first.Storage,
+		SMSC:      first.SMSC,
+	}
+}
+
+// MergeIncompleteGroup merges available parts and prefixes when the group timed out.
+func MergeIncompleteGroup(segs []Part) modem.Message {
+	msg := MergeGroup(segs)
+	if len(segs) == 0 {
+		return msg
+	}
+	total := segs[0].PartTotal
+	if total < 2 {
+		return msg
+	}
+	msg.Text = fmt.Sprintf("[incomplete %d/%d]\n%s", len(segs), total, msg.Text)
+	return msg
 }
 
 // Merge joins concatenated segments into single modem.Message values.

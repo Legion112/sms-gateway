@@ -12,8 +12,9 @@ type StorageConfig struct {
 
 // WatchConfig holds daemon runtime settings.
 type WatchConfig struct {
-	CatchUpOnStart     bool          `yaml:"catch_up_on_start"`
-	SerialPollInterval time.Duration `yaml:"-"`
+	CatchUpOnStart        bool          `yaml:"catch_up_on_start"`
+	SerialPollInterval    time.Duration `yaml:"-"`
+	ConcatAssemblyTimeout time.Duration `yaml:"-"`
 }
 
 type watchFile struct {
@@ -21,8 +22,9 @@ type watchFile struct {
 		Path string `yaml:"path"`
 	} `yaml:"storage"`
 	Watch struct {
-		CatchUpOnStart     bool   `yaml:"catch_up_on_start"`
-		SerialPollInterval string `yaml:"serial_poll_interval"`
+		CatchUpOnStart        bool   `yaml:"catch_up_on_start"`
+		SerialPollInterval    string `yaml:"serial_poll_interval"`
+		ConcatAssemblyTimeout string `yaml:"concat_assembly_timeout"`
 	} `yaml:"watch"`
 }
 
@@ -37,6 +39,13 @@ func applyWatchFile(file *watchFile, cfg *Config) error {
 			return fmt.Errorf("watch.serial_poll_interval: %w", err)
 		}
 		cfg.Watch.SerialPollInterval = d
+	}
+	if file.Watch.ConcatAssemblyTimeout != "" {
+		d, err := time.ParseDuration(file.Watch.ConcatAssemblyTimeout)
+		if err != nil {
+			return fmt.Errorf("watch.concat_assembly_timeout: %w", err)
+		}
+		cfg.Watch.ConcatAssemblyTimeout = d
 	}
 	return nil
 }
@@ -80,4 +89,12 @@ func (cfg Config) SerialPollInterval() time.Duration {
 		return cfg.Watch.SerialPollInterval
 	}
 	return 10 * time.Second
+}
+
+// ConcatAssemblyTimeout returns how long to wait for all concat parts before forwarding partial.
+func (cfg Config) ConcatAssemblyTimeout() time.Duration {
+	if cfg.Watch.ConcatAssemblyTimeout > 0 {
+		return cfg.Watch.ConcatAssemblyTimeout
+	}
+	return 60 * time.Second
 }

@@ -71,3 +71,4 @@ storage:
 watch:
   catch_up_on_start: true
   serial_poll_interval: 10s
+  concat_assembly_timeout: 60s

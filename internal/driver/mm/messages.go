@@ -30,6 +30,27 @@ func (d *Driver) ListMessages(ctx context.Context) ([]modem.Message, error) {
 	return messages, nil
 }
 
+// ListMessageParts returns SMS segments; ModemManager does not expose concat metadata.
+func (d *Driver) ListMessageParts(ctx context.Context) ([]modem.Part, error) {
+	msgs, err := d.ListMessages(ctx)
+	if err != nil {
+		return nil, err
+	}
+	parts := make([]modem.Part, len(msgs))
+	for i, msg := range msgs {
+		parts[i] = modem.Part{
+			ID:        msg.ID,
+			From:      msg.From,
+			State:     msg.State,
+			Timestamp: msg.Timestamp,
+			Text:      msg.Text,
+			Storage:   msg.Storage,
+			SMSC:      msg.SMSC,
+		}
+	}
+	return parts, nil
+}
+
 func (d *Driver) readMessage(ctx context.Context, path dbus.ObjectPath) (modem.Message, error) {
 	props, err := d.getObjectProperties(ctx, path, smsObjectInterface, []string{
 		"Number", "Text", "State", "Timestamp", "Storage", "SMSC",

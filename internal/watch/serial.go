@@ -13,6 +13,10 @@ type serialIncoming interface {
 	WatchIncoming(ctx context.Context, interval time.Duration, handler modem.IncomingHandler) error
 }
 
+type serialPartsIncoming interface {
+	WatchIncomingParts(ctx context.Context, interval time.Duration, handler serial.PartsHandler) error
+}
+
 func runSerialWatch(ctx context.Context, m modem.Modem, interval time.Duration, handler modem.IncomingHandler) error {
 	if w, ok := m.(serialIncoming); ok {
 		return w.WatchIncoming(ctx, interval, handler)
@@ -21,4 +25,14 @@ func runSerialWatch(ctx context.Context, m modem.Modem, interval time.Duration, 
 		return d.WatchIncoming(ctx, interval, handler)
 	}
 	return fmt.Errorf("serial driver does not support incoming watch")
+}
+
+func runSerialWatchParts(ctx context.Context, m modem.Modem, interval time.Duration, handler func(ctx context.Context, parts []modem.Part) error) error {
+	if w, ok := m.(serialPartsIncoming); ok {
+		return w.WatchIncomingParts(ctx, interval, handler)
+	}
+	if d, ok := m.(*serial.Driver); ok {
+		return d.WatchIncomingParts(ctx, interval, handler)
+	}
+	return fmt.Errorf("serial driver does not support incoming parts watch")
 }

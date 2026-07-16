@@ -21,22 +21,31 @@ var (
 
 // ListMessages reads stored SMS via PDU-mode CMGL, falling back to text-mode QCMGR.
 func (d *Driver) ListMessages(ctx context.Context) ([]modem.Message, error) {
+	parts, err := d.ListMessageParts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return smsconcat.Merge(parts), nil
+}
+
+// ListMessageParts returns raw SMS segments including concat metadata.
+func (d *Driver) ListMessageParts(ctx context.Context) ([]modem.Part, error) {
 	if err := d.setup(ctx); err != nil {
 		return nil, fmt.Errorf("setup: %w", err)
 	}
 
 	parts, err := d.listPDUParts(ctx)
 	if err == nil {
-		return smsconcat.Merge(parts), nil
+		return parts, nil
 	}
 	if err != nil && d.verbose {
 		d.log("pdu list failed: %v, falling back to text mode", err)
 	}
 
-	return d.listMessagesText(ctx)
+	return d.listTextParts(ctx)
 }
 
-func (d *Driver) listPDUParts(ctx context.Context) ([]smsconcat.Part, error) {
+func (d *Driver) listPDUParts(ctx context.Context) ([]modem.Part, error) {
 	if _, err := d.exec(ctx, "AT+CMGF=0"); err != nil {
 		return nil, fmt.Errorf("pdu mode: %w", err)
 	}
@@ -48,7 +57,7 @@ func (d *Driver) listPDUParts(ctx context.Context) ([]smsconcat.Part, error) {
 		}
 	}()
 
-	var parts []smsconcat.Part
+	var parts []modem.Part
 	for stat, state := range map[int]string{0: "received (unread)", 1: "received (read)"} {
 		statParts, err := d.listPDUPartsByStat(ctx, stat, state)
 		if err != nil {
@@ -59,19 +68,19 @@ func (d *Driver) listPDUParts(ctx context.Context) ([]smsconcat.Part, error) {
 	return parts, nil
 }
 
-func (d *Driver) listPDUPartsByStat(ctx context.Context, stat int, state string) ([]smsconcat.Part, error) {
+func (d *Driver) listPDUPartsByStat(ctx context.Context, stat int, state string) ([]modem.Part, error) {
 	resp, err := d.exec(ctx, fmt.Sprintf("AT+CMGL=%d", stat))
 	if err != nil {
 		return nil, fmt.Errorf("cmgl stat %d: %w", stat, err)
 	}
 	entries := parseCMGLPDU(resp)
-	parts := make([]smsconcat.Part, 0, len(entries))
+	parts := make([]modem.Part, 0, len(entries))
 	for _, entry := range entries {
 		deliver, err := smspdu.ParseHexDeliver(entry.hexPDU)
 		if err != nil {
 			return nil, fmt.Errorf("parse pdu index %s: %w", entry.index, err)
 		}
-		parts = append(parts, smsconcat.Part{
+		parts = append(parts, modem.Part{
 			ID:        entry.index,
 			From:      deliver.From,
 			State:     state,
@@ -132,6 +141,14 @@ func parseCMGLPDU(response string) []cmglPDUEntry {
 }
 
 func (d *Driver) listMessagesText(ctx context.Context) ([]modem.Message, error) {
+	parts, err := d.listTextParts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return smsconcat.Merge(parts), nil
+}
+
+func (d *Driver) listTextParts(ctx context.Context) ([]modem.Part, error) {
 	if _, err := d.exec(ctx, "AT+CMGF=1"); err != nil {
 		return nil, fmt.Errorf("text mode: %w", err)
 	}
@@ -147,10 +164,24 @@ func (d *Driver) listMessagesText(ctx context.Context) ([]modem.Message, error) 
 	}
 
 	parts, qcmgrOK := d.readQCMGRParts(ctx, indices)
-	if !qcmgrOK {
-		return parseCMGL(resp), nil
+	if qcmgrOK {
+		return parts, nil
 	}
-	return smsconcat.Merge(parts), nil
+
+	msgs := parseCMGL(resp)
+	parts = make([]modem.Part, len(msgs))
+	for i, msg := range msgs {
+		parts[i] = modem.Part{
+			ID:        msg.ID,
+			From:      msg.From,
+			State:     msg.State,
+			Timestamp: msg.Timestamp,
+			Text:      msg.Text,
+			Storage:   msg.Storage,
+			SMSC:      msg.SMSC,
+		}
+	}
+	return parts, nil
 }
 
 func parseCMGLIndices(response string) []string {
@@ -164,8 +195,8 @@ func parseCMGLIndices(response string) []string {
 	return indices
 }
 
-func (d *Driver) readQCMGRParts(ctx context.Context, indices []string) ([]smsconcat.Part, bool) {
-	parts := make([]smsconcat.Part, 0, len(indices))
+func (d *Driver) readQCMGRParts(ctx context.Context, indices []string) ([]modem.Part, bool) {
+	parts := make([]modem.Part, 0, len(indices))
 	for _, index := range indices {
 		resp, err := d.exec(ctx, "AT+QCMGR="+index)
 		if err != nil {
@@ -180,7 +211,7 @@ func (d *Driver) readQCMGRParts(ctx context.Context, indices []string) ([]smscon
 	return parts, true
 }
 
-func parseQCMGR(index, response string) (smsconcat.Part, bool) {
+func parseQCMGR(index, response string) (modem.Part, bool) {
 	lines := strings.Split(response, "\n")
 	for i := 0; i < len(lines); i++ {
 		line := strings.TrimSpace(lines[i])
@@ -194,7 +225,7 @@ func parseQCMGR(index, response string) (smsconcat.Part, bool) {
 		}
 
 		timestamp, concatRef, partNum, partTotal := parseQCMGRTail(m[3])
-		return smsconcat.Part{
+		return modem.Part{
 			ID:        index,
 			From:      m[2],
 			State:     cmglStatus(m[1]),
@@ -206,7 +237,7 @@ func parseQCMGR(index, response string) (smsconcat.Part, bool) {
 			PartTotal: partTotal,
 		}, true
 	}
-	return smsconcat.Part{}, false
+	return modem.Part{}, false
 }
 
 func parseQCMGRTail(tail string) (timestamp string, concatRef, partNum, partTotal int) {

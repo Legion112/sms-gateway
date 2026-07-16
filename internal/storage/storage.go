@@ -85,6 +85,10 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.migrateConcatSchema(); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 
@@ -159,8 +163,15 @@ func (s *Store) GetMessage(id string) (Message, bool, error) {
 
 // NeedsDelivery reports whether channel still needs a successful delivery for messageID.
 func (s *Store) NeedsDelivery(messageID, channel string) (bool, error) {
+	superseded, err := s.IsSuperseded(messageID)
+	if err != nil {
+		return false, err
+	}
+	if superseded {
+		return false, nil
+	}
 	var sentAt sql.NullString
-	err := s.db.QueryRow(
+	err = s.db.QueryRow(
 		`SELECT sent_at FROM deliveries WHERE message_id = ? AND channel = ?`,
 		messageID, channel,
 	).Scan(&sentAt)
