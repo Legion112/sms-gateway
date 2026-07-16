@@ -25,6 +25,9 @@ func (r *Router) Resolve(msg InboundSMS) (ruleName string, channels []string, ok
 		if !matchFrom(rule.From, msg.From) {
 			continue
 		}
+		if !matchToLine(rule.ToLine, msg.ToLine) {
+			continue
+		}
 		return rule.Name, append([]string(nil), rule.To...), true
 	}
 	return "", nil, false
@@ -38,12 +41,20 @@ func matchModem(ruleModem, msgModem string) bool {
 }
 
 func matchFrom(pattern, from string) bool {
+	return matchPhonePattern(pattern, from)
+}
+
+func matchToLine(pattern, toLine string) bool {
+	return matchPhonePattern(pattern, toLine)
+}
+
+func matchPhonePattern(pattern, value string) bool {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" || pattern == "*" {
 		return true
 	}
 	if strings.HasSuffix(pattern, "*") {
-		return strings.HasPrefix(from, strings.TrimSuffix(pattern, "*"))
+		return strings.HasPrefix(value, strings.TrimSuffix(pattern, "*"))
 	}
-	return pattern == from
+	return pattern == value
 }

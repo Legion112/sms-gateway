@@ -42,6 +42,12 @@ channels:
       chat_id: 123456789         # private chat with your bot (send /start first)
       # proxy_url: socks5://127.0.0.1:1080   # optional; SSH SOCKS tunnel when Telegram is blocked
 
+  vika-telegram:
+    driver: telegram_bot
+    telegram:
+      bot_token: ""
+      chat_id: 987654321
+
   backup-sms:
     driver: sms                  # not implemented yet
     sms:
@@ -54,14 +60,25 @@ channels:
       smtp_host: smtp.example.com
       to: ops@example.com
 
+# Route by recipient line (sim_numbers), not modem slot. First match wins.
 forward_rules:
   - name: bank-otp
-    modem: ec25-main
+    to_line: "+99888888888"
     from: "+1234567890"
     to: [my-telegram]
 
-  - name: sim1-default
-    modem: ec25-main
+  - name: line-a
+    to_line: "+99888888888"
+    from: "*"
+    to: [my-telegram]
+
+  - name: line-b
+    to_line: "+99811111111"
+    from: "*"
+    to: [vika-telegram]
+
+  - name: default
+    to_line: "*"                 # any recipient, including unmapped SIMs
     from: "*"
     to: [my-telegram]
 

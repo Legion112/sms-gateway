@@ -70,3 +70,84 @@ func TestRouterAnyModem(t *testing.T) {
 		t.Fatalf("expected match for empty rule modem, got ok=%v ch=%v", ok, ch)
 	}
 }
+
+func TestRouterToLine(t *testing.T) {
+	rules := []config.ForwardRule{
+		{Name: "line-a", ToLine: "+15550001001", From: "*", To: []string{"my-telegram"}},
+		{Name: "line-b", ToLine: "+15550001002", From: "*", To: []string{"vika-telegram"}},
+		{Name: "default", ToLine: "*", From: "*", To: []string{"my-telegram"}},
+	}
+	r := forward.NewRouter(rules)
+
+	tests := []struct {
+		name     string
+		msg      forward.InboundSMS
+		wantRule string
+		wantCh   []string
+	}{
+		{
+			name:     "mapped line a",
+			msg:      forward.InboundSMS{Modem: "m1", From: "+15559999999", ToLine: "+15550001001"},
+			wantRule: "line-a",
+			wantCh:   []string{"my-telegram"},
+		},
+		{
+			name:     "mapped line b",
+			msg:      forward.InboundSMS{Modem: "m2", From: "+15559999999", ToLine: "+15550001002"},
+			wantRule: "line-b",
+			wantCh:   []string{"vika-telegram"},
+		},
+		{
+			name:     "unmapped empty ToLine catch-all",
+			msg:      forward.InboundSMS{Modem: "m1", From: "+15559999999", ToLine: ""},
+			wantRule: "default",
+			wantCh:   []string{"my-telegram"},
+		},
+		{
+			name:     "other mapped line catch-all",
+			msg:      forward.InboundSMS{Modem: "m1", From: "+15559999999", ToLine: "+15550001999"},
+			wantRule: "default",
+			wantCh:   []string{"my-telegram"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rule, ch, ok := r.Resolve(tc.msg)
+			if !ok {
+				t.Fatalf("expected match")
+			}
+			if rule != tc.wantRule {
+				t.Fatalf("rule=%q want %q", rule, tc.wantRule)
+			}
+			if len(ch) != len(tc.wantCh) {
+				t.Fatalf("channels=%v want %v", ch, tc.wantCh)
+			}
+			for i := range ch {
+				if ch[i] != tc.wantCh[i] {
+					t.Fatalf("channels=%v want %v", ch, tc.wantCh)
+				}
+			}
+		})
+	}
+}
+
+func TestRouterToLineWrongLineNoMatchBeforeCatchAll(t *testing.T) {
+	r := forward.NewRouter([]config.ForwardRule{
+		{Name: "line-a", ToLine: "+15550001001", From: "*", To: []string{"my-telegram"}},
+	})
+	_, _, ok := r.Resolve(forward.InboundSMS{Modem: "m1", From: "+15559999999", ToLine: "+15550001002"})
+	if ok {
+		t.Fatal("specific to_line must not match wrong recipient")
+	}
+}
+
+func TestRouterToLinePrefix(t *testing.T) {
+	r := forward.NewRouter([]config.ForwardRule{
+		{Name: "prefix", ToLine: "+1555000*", From: "*", To: []string{"tg"}},
+	})
+	rule, ch, ok := r.Resolve(forward.InboundSMS{ToLine: "+15550001001", From: "+1"})
+	if !ok || rule != "prefix" || len(ch) != 1 {
+		t.Fatalf("ok=%v rule=%q ch=%v", ok, rule, ch)
+	}
+}

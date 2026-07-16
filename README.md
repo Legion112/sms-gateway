@@ -140,8 +140,11 @@ Optional sections in [`config.example.yaml`](config.example.yaml):
 | Section | Purpose |
 |---------|---------|
 | `modems` | Named modems for multi-SIM setups (hardware settings) |
+| `sim_numbers` | ICCID → MSISDN map (SIM-centric line identity) |
 | `channels` | Named forward destinations (Telegram bot, email, SMS, …) |
-| `forward_rules` | Route inbound SMS: `modem` + `from` → `to: [channels]` (first match wins) |
+| `forward_rules` | Route inbound SMS: optional `modem` + `from` + `to_line` → `to: [channels]` (first match wins) |
+
+`to_line` matches the recipient MSISDN from `sim_numbers` (`*` or omitted = any line, including unmapped SIMs). Prefer `to_line` over `modem` so routing survives SIM swaps.
 
 **Channel drivers:**
 

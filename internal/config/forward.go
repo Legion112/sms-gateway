@@ -47,10 +47,11 @@ type EmailChannelConfig struct {
 
 // ForwardRule routes inbound SMS to one or more channels.
 type ForwardRule struct {
-	Name  string   `yaml:"name"`
-	Modem string   `yaml:"modem"`
-	From  string   `yaml:"from"`
-	To    []string `yaml:"to"`
+	Name   string   `yaml:"name"`
+	Modem  string   `yaml:"modem"`
+	From   string   `yaml:"from"`
+	ToLine string   `yaml:"to_line"` // recipient MSISDN from sim_numbers; "" or "*" = any
+	To     []string `yaml:"to"`
 }
 
 func applyForwardingFile(file *forwardFile, cfg *Config) error {
@@ -146,6 +147,9 @@ func validateForwarding(cfg Config) error {
 				return fmt.Errorf("%s: modem %q not found in modems", label, rule.Modem)
 			}
 		}
+		if err := validateToLine(label, rule.ToLine); err != nil {
+			return err
+		}
 		if len(rule.To) == 0 {
 			return fmt.Errorf("%s: to must list at least one channel", label)
 		}
@@ -170,6 +174,24 @@ func ruleLabel(rule ForwardRule, index int) string {
 		return fmt.Sprintf("forward_rules.%s", rule.Name)
 	}
 	return fmt.Sprintf("forward_rules[%d]", index)
+}
+
+func validateToLine(label, toLine string) error {
+	pattern := strings.TrimSpace(toLine)
+	if pattern == "" || pattern == "*" {
+		return nil
+	}
+	if strings.HasSuffix(pattern, "*") {
+		prefix := strings.TrimSuffix(pattern, "*")
+		if prefix == "" {
+			return fmt.Errorf("%s: to_line %q is invalid", label, toLine)
+		}
+		return nil
+	}
+	if !e164Re.MatchString(pattern) {
+		return fmt.Errorf("%s: to_line must be E.164, \"*\", or a prefix wildcard (e.g. +1555*)", label)
+	}
+	return nil
 }
 
 // ModemConfig returns a Config for factory.New from a named modem entry.
