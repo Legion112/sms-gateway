@@ -55,15 +55,22 @@ func statusOne(base config.Config, target cmdutil.ModemHandle) error {
 		return cmdutil.NewCLIError(cmdutil.ExitModem, fmt.Sprintf("error: %v", err))
 	}
 
-	phone := cmdutil.ResolvePhoneNumber(ctx, base, target, status.PhoneNumber, status.NetworkState)
+	line := cmdutil.ResolveLine(base, status.ICCID)
 
 	fmt.Printf("driver: %s\n", status.Driver)
 	fmt.Printf("device: %s\n", status.Device)
 	fmt.Printf("sim: %s\n", status.SimStatus)
-	if phone != "" {
-		fmt.Printf("phone: %s\n", phone)
+	if status.ICCID != "" {
+		fmt.Printf("iccid: %s\n", config.NormalizeICCID(status.ICCID))
 	} else {
-		fmt.Printf("phone: unknown\n")
+		fmt.Printf("iccid: unknown\n")
+	}
+	if status.IMSI != "" {
+		fmt.Printf("imsi: %s\n", status.IMSI)
+	}
+	fmt.Printf("phone: %s\n", cmdutil.FormatPhoneStatus(line))
+	if status.PhoneNumber != "" {
+		fmt.Printf("reported_msisdn: %s\n", status.PhoneNumber)
 	}
 	fmt.Printf("modem: %s\n", status.ModemState)
 	fmt.Printf("network: %s\n", status.NetworkState)

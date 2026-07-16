@@ -37,6 +37,7 @@ func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 
 	simStatus := "unknown"
 	simPath := variantObjectPath(props["Sim"])
+	var iccid, imsi string
 	if simPath == "" || simPath == "/" {
 		if failedReason == 2 {
 			simStatus = "missing"
@@ -44,7 +45,7 @@ func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 			simStatus = "absent"
 		}
 	} else {
-		simStatus = d.readSimStatus(ctx, simPath)
+		simStatus, iccid, imsi = d.readSimInfo(ctx, simPath)
 	}
 
 	unlock := variantUint32(props["UnlockRequired"])
@@ -75,11 +76,21 @@ func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 
 	ready := simStatus == "ready" && accessTechRegistered(state)
 	phoneNumber := firstOwnNumber(props["OwnNumbers"])
-	detail := strings.Join([]string{
+	detailParts := []string{
 		fmt.Sprintf("sim=%s", simStatus),
 		fmt.Sprintf("modem=%s", modemState),
 		fmt.Sprintf("network=%s", networkState),
-	}, ", ")
+	}
+	if iccid != "" {
+		detailParts = append(detailParts, fmt.Sprintf("iccid=%s", iccid))
+	}
+	if imsi != "" {
+		detailParts = append(detailParts, fmt.Sprintf("imsi=%s", imsi))
+	}
+	if phoneNumber != "" {
+		detailParts = append(detailParts, fmt.Sprintf("reported_msisdn=%s", phoneNumber))
+	}
+	detail := strings.Join(detailParts, ", ")
 
 	if d.verbose {
 		d.log("MM: sms status %s", detail)
@@ -89,6 +100,8 @@ func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 		Driver:       modem.DriverMM,
 		Device:       string(d.modemPath),
 		SimStatus:    simStatus,
+		ICCID:        iccid,
+		IMSI:         imsi,
 		PhoneNumber:  phoneNumber,
 		NetworkState: networkState,
 		ModemState:   modemState,
@@ -99,15 +112,15 @@ func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 	}, nil
 }
 
-func (d *Driver) readSimStatus(ctx context.Context, simPath dbus.ObjectPath) string {
-	props, err := d.getObjectProperties(ctx, simPath, simInterface, []string{"Active"})
+func (d *Driver) readSimInfo(ctx context.Context, simPath dbus.ObjectPath) (status, iccid, imsi string) {
+	props, err := d.getObjectProperties(ctx, simPath, simInterface, []string{"Active", "SimIdentifier", "Imsi"})
 	if err != nil {
-		return "unknown"
+		return "unknown", "", ""
 	}
 	if !variantBool(props["Active"]) {
-		return "inactive"
+		return "inactive", variantString(props["SimIdentifier"]), variantString(props["Imsi"])
 	}
-	return "ready"
+	return "ready", variantString(props["SimIdentifier"]), variantString(props["Imsi"])
 }
 
 func (d *Driver) listMessages(ctx context.Context) ([]dbus.ObjectPath, error) {

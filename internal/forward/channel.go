@@ -23,9 +23,11 @@ type Channel interface {
 
 // InboundSMS is one received SMS passed to forward channels.
 type InboundSMS struct {
-	Modem string // config modem name, e.g. "ec25-main"
-	ID    string // modem message id
-	From  string // sender phone number (E.164 preferred)
-	Text  string
-	Time  string // display timestamp
+	Modem   string // config modem name, e.g. "ec25-main" (hardware context)
+	ID      string // modem message id
+	From    string // sender phone number (E.164 preferred)
+	ToLine  string // resolved recipient line from sim_numbers (empty if unmapped)
+	ToICCID string // ICCID of receiving SIM (for debug when unmapped)
+	Text    string
+	Time    string // display timestamp
 }

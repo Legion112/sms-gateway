@@ -17,12 +17,14 @@ mm:
 
 default_modem: ec25-main
 
+# SIM-centric line numbers (ICCID from status or modems list --discover)
+sim_numbers:
+  "8999801234567890123": "+998901234567"
+  "8999809876543210987": "+998909876543"
+
 modems:
   ec25-main:
     driver: mm
-    # phone_number: "+79001234567"   # optional manual line number
-    # phone_number: "+998901234567"  # manual fallback when SIM/USSD cannot report MSISDN
-    # phone_ussd: "*148#"            # Beeline Uzbekistan own-number USSD (also *1001#)
     mm:
       modem_index: 0
       timeout: 5s

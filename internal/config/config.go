@@ -27,6 +27,7 @@ type Config struct {
 	Serial       SerialConfig             `yaml:"serial"`
 	MM           MMConfig                 `yaml:"mm"`
 	DefaultModem string                   `yaml:"default_modem"`
+	SimNumbers   map[string]string        `yaml:"sim_numbers"`
 	Modems       map[string]ModemEntry    `yaml:"modems"`
 	Channels     map[string]ChannelConfig `yaml:"channels"`
 	ForwardRules []ForwardRule            `yaml:"forward_rules"`

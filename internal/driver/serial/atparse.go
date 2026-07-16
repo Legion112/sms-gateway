@@ -19,6 +19,9 @@ var (
 	phoneUZLocalRe = regexp.MustCompile(`(?:^|[^\d])(9\d{8})(?:[^\d]|$)`)
 	csqRe          = regexp.MustCompile(`\+CSQ:\s*(\d+),(\d+)`)
 	cpmsRe         = regexp.MustCompile(`\+CPMS:\s*"([^"]+)",(\d+),(\d+)`)
+	qccidRe        = regexp.MustCompile(`\+QCCID:\s*([0-9A-Fa-f]+)`)
+	ccidRe         = regexp.MustCompile(`\+CCID:\s*([0-9A-Fa-f]+)`)
+	cimiRe         = regexp.MustCompile(`\+CIMI:\s*(\d+)`)
 )
 
 func parseCPIN(response string) string {
@@ -103,6 +106,23 @@ func parseCNUM(response string) string {
 		if len(m) == 2 && strings.TrimSpace(m[1]) != "" {
 			return strings.TrimSpace(m[1])
 		}
+	}
+	return ""
+}
+
+func parseICCID(response string) string {
+	if m := qccidRe.FindStringSubmatch(response); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	if m := ccidRe.FindStringSubmatch(response); len(m) == 2 {
+		return strings.TrimSpace(m[1])
+	}
+	return ""
+}
+
+func parseCIMI(response string) string {
+	if m := cimiRe.FindStringSubmatch(response); len(m) == 2 {
+		return strings.TrimSpace(m[1])
 	}
 	return ""
 }

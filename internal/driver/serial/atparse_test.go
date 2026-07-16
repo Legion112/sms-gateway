@@ -65,6 +65,21 @@ func TestParseCNUM(t *testing.T) {
 	}
 }
 
+func TestParseICCIDAndCIMI(t *testing.T) {
+	got := parseICCID("+QCCID: 8999801234567890123F\nOK")
+	if got != "8999801234567890123F" {
+		t.Fatalf("iccid=%q", got)
+	}
+	got = parseICCID("+CCID: 8999801234567890123\nOK")
+	if got != "8999801234567890123" {
+		t.Fatalf("ccid=%q", got)
+	}
+	got = parseCIMI("+CIMI: 434059912345678\nOK")
+	if got != "434059912345678" {
+		t.Fatalf("imsi=%q", got)
+	}
+}
+
 func TestParseCUSDAndExtractPhone(t *testing.T) {
 	resp := `+CUSD: 0,"Ваш номер +79001234567",15` + "\nOK"
 	if parseCUSD(resp) == "" {

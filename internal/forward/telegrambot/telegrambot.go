@@ -127,14 +127,29 @@ func (c *Channel) Close() error { return nil }
 
 // SMSMessage is the inbound SMS payload for formatting.
 type SMSMessage struct {
-	From string
-	Text string
-	Time string
+	Modem   string
+	From    string
+	ToLine  string
+	ToICCID string
+	Text    string
+	Time    string
 }
 
 func formatMessage(msg SMSMessage) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "SMS from %s\n", msg.From)
+	switch {
+	case msg.ToLine != "":
+		fmt.Fprintf(&b, "SMS to %s (%s)\n", msg.ToLine, msg.Modem)
+	case msg.ToICCID != "":
+		fmt.Fprintf(&b, "SMS to unknown line iccid=%s (%s)\n", msg.ToICCID, msg.Modem)
+	case msg.Modem != "":
+		fmt.Fprintf(&b, "SMS to unknown line iccid=unavailable (%s)\n", msg.Modem)
+	default:
+		b.WriteString("SMS from ")
+		fmt.Fprintf(&b, "%s\n", msg.From)
+		return b.String()
+	}
+	fmt.Fprintf(&b, "from %s\n", msg.From)
 	if msg.Time != "" {
 		fmt.Fprintf(&b, "%s\n", msg.Time)
 	}
@@ -143,6 +158,11 @@ func formatMessage(msg SMSMessage) string {
 		b.WriteString(msg.Text)
 	}
 	return b.String()
+}
+
+// FormatMessageForTest exposes message formatting for unit tests.
+func FormatMessageForTest(msg SMSMessage) string {
+	return formatMessage(msg)
 }
 
 type apiResponse struct {

@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/legion/sms-gateway/internal/cmdutil"
 	"github.com/legion/sms-gateway/internal/config"
 	"github.com/legion/sms-gateway/internal/factory"
 	"github.com/legion/sms-gateway/internal/forward"
@@ -26,9 +27,11 @@ type Dependencies struct {
 
 // Service runs the SMS watch and forward pipeline.
 type Service struct {
-	cfg  config.Config
-	deps Dependencies
-	mu   sync.Mutex
+	cfg      config.Config
+	deps     Dependencies
+	mu       sync.Mutex
+	simMu    sync.RWMutex
+	simLines map[string]cmdutil.ResolvedLine
 }
 
 // NewService creates a watch service.
@@ -72,6 +75,9 @@ func (s *Service) catchUpModem(ctx context.Context, modemName string, entry conf
 		return fmt.Errorf("open: %w", err)
 	}
 	defer m.Close()
+	if err := s.refreshSimLine(ctx, modemName, m); err != nil && ctx.Err() == nil {
+		s.deps.Log("sim lookup modem %s: %v", modemName, err)
+	}
 	return s.catchUp(ctx, modemName, m)
 }
 
@@ -81,6 +87,10 @@ func (s *Service) runModem(ctx context.Context, modemName string, entry config.M
 		return fmt.Errorf("modem %s: %w", modemName, err)
 	}
 	defer m.Close()
+
+	if err := s.refreshSimLine(ctx, modemName, m); err != nil && ctx.Err() == nil {
+		s.deps.Log("sim lookup modem %s: %v", modemName, err)
+	}
 
 	partsHandler := func(ctx context.Context, parts []modem.Part) error {
 		return s.ingestParts(ctx, modemName, parts)
@@ -145,6 +155,32 @@ func listMessageParts(ctx context.Context, m modem.Modem) ([]modem.Part, error) 
 		}
 	}
 	return parts, nil
+}
+
+func (s *Service) refreshSimLine(ctx context.Context, modemName string, m modem.Modem) error {
+	statusCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	status, err := m.SMSStatus(statusCtx)
+	if err != nil {
+		return err
+	}
+	line := cmdutil.ResolveLine(s.cfg, status.ICCID)
+	if line.Source == cmdutil.LineSourceUnmapped && line.ICCID != "" {
+		s.deps.Log("unknown SIM iccid=%s received on modem=%s", line.ICCID, modemName)
+	}
+	s.simMu.Lock()
+	if s.simLines == nil {
+		s.simLines = make(map[string]cmdutil.ResolvedLine)
+	}
+	s.simLines[modemName] = line
+	s.simMu.Unlock()
+	return nil
+}
+
+func (s *Service) simLineFor(modemName string) cmdutil.ResolvedLine {
+	s.simMu.RLock()
+	defer s.simMu.RUnlock()
+	return s.simLines[modemName]
 }
 
 func (s *Service) ingestParts(ctx context.Context, modemName string, parts []modem.Part) error {
@@ -275,12 +311,15 @@ func (s *Service) deliverMergedConcat(ctx context.Context, modemName string, par
 }
 
 func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Message, storageID string) error {
+	line := s.simLineFor(modemName)
 	inbound := forward.InboundSMS{
-		Modem: modemName,
-		ID:    msg.ID,
-		From:  msg.From,
-		Text:  msg.Text,
-		Time:  msg.Timestamp,
+		Modem:   modemName,
+		ID:      msg.ID,
+		From:    msg.From,
+		ToLine:  line.Number,
+		ToICCID: line.ICCID,
+		Text:    msg.Text,
+		Time:    msg.Timestamp,
 	}
 	if inbound.Time == "" {
 		inbound.Time = time.Now().Format("2006-01-02 15:04:05")

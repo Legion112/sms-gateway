@@ -23,7 +23,9 @@ type SMSStatus struct {
 	Driver       Driver
 	Device       string
 	SimStatus    string
-	PhoneNumber  string
+	ICCID        string
+	IMSI         string
+	PhoneNumber  string // modem-reported MSISDN (informational only)
 	NetworkState string
 	ModemState   string
 	MessageStore string

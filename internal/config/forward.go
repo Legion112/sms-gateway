@@ -7,13 +7,15 @@ import (
 	"time"
 )
 
-// ModemEntry is one named modem (hardware access).
+// ModemEntry is one named modem (hardware access only).
 type ModemEntry struct {
-	Driver      string       `yaml:"driver"`
-	PhoneNumber string       `yaml:"phone_number"`
-	PhoneUSSD   string       `yaml:"phone_ussd"`
-	Serial      SerialConfig `yaml:"serial"`
-	MM          MMConfig     `yaml:"mm"`
+	Driver string       `yaml:"driver"`
+	Serial SerialConfig `yaml:"serial"`
+	MM     MMConfig     `yaml:"mm"`
+	// Removed fields rejected at validate: phone_number, phone_ussd, expected_iccid
+	PhoneNumber   string `yaml:"phone_number,omitempty"`
+	PhoneUSSD     string `yaml:"phone_ussd,omitempty"`
+	ExpectedICCID string `yaml:"expected_iccid,omitempty"`
 }
 
 // ChannelConfig is one named forward destination.
@@ -58,6 +60,9 @@ func applyForwardingFile(file *forwardFile, cfg *Config) error {
 	if len(file.Modems) > 0 {
 		cfg.Modems = file.Modems
 	}
+	if len(file.SimNumbers) > 0 {
+		cfg.SimNumbers = file.SimNumbers
+	}
 	if len(file.Channels) > 0 {
 		cfg.Channels = file.Channels
 	}
@@ -97,7 +102,17 @@ func validateForwarding(cfg Config) error {
 		if m.Driver != DriverMM && m.Driver != DriverSerial {
 			return fmt.Errorf("modems.%s: unknown driver %q", name, m.Driver)
 		}
+		if err := validateModemEntryLegacyFields(name, m); err != nil {
+			return err
+		}
+		if m.ExpectedICCID != "" {
+			return fmt.Errorf("modems.%s: expected_iccid is removed; use top-level sim_numbers keyed by ICCID", name)
+		}
 		modemNames[name] = struct{}{}
+	}
+
+	if err := validateSimNumbers(cfg.SimNumbers); err != nil {
+		return err
 	}
 
 	channelNames := make(map[string]struct{}, len(cfg.Channels))
@@ -179,6 +194,7 @@ func (cfg Config) ModemConfig(name string) (Config, error) {
 
 type forwardFile struct {
 	DefaultModem string                   `yaml:"default_modem"`
+	SimNumbers   map[string]string        `yaml:"sim_numbers"`
 	Modems       map[string]ModemEntry    `yaml:"modems"`
 	Channels     map[string]ChannelConfig `yaml:"channels"`
 	ForwardRules []ForwardRule            `yaml:"forward_rules"`

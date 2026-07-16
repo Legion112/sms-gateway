@@ -81,6 +81,34 @@ func TestNewRejectsInvalidProxyURL(t *testing.T) {
 	}
 }
 
+func TestFormatMessageWithToLine(t *testing.T) {
+	text := telegrambot.FormatMessageForTest(telegrambot.SMSMessage{
+		Modem:  "ec25-main",
+		ToLine: "+998901234567",
+		From:   "Beeline@",
+		Time:   "2026-06-11 09:21:00",
+		Text:   "hello",
+	})
+	if !strings.Contains(text, "SMS to +998901234567 (ec25-main)") {
+		t.Fatalf("text=%q", text)
+	}
+	if !strings.Contains(text, "from Beeline@") {
+		t.Fatalf("text=%q", text)
+	}
+}
+
+func TestFormatMessageUnmappedICCID(t *testing.T) {
+	text := telegrambot.FormatMessageForTest(telegrambot.SMSMessage{
+		Modem:   "ec25-main",
+		ToICCID: "8999801234567890123",
+		From:    "Beeline@",
+		Text:    "hello",
+	})
+	if !strings.Contains(text, "unknown line iccid=8999801234567890123") {
+		t.Fatalf("text=%q", text)
+	}
+}
+
 func TestAPIError(t *testing.T) {
 	client := &http.Client{Transport: roundTripper(func(req *http.Request) (*http.Response, error) {
 		return jsonResp(`{"ok":false,"description":"bad token"}`), nil

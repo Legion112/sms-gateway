@@ -1,32 +1,42 @@
 package cmdutil
 
-import "testing"
+import (
+	"testing"
 
-func TestIsRoaming(t *testing.T) {
-	tests := []struct {
-		state string
-		want  bool
-	}{
-		{"registered (roaming)", true},
-		{"registered (home)", false},
-		{"searching", false},
-		{"", false},
+	"github.com/legion/sms-gateway/internal/config"
+)
+
+func TestResolveLineFromSimNumbers(t *testing.T) {
+	cfg := config.Config{
+		SimNumbers: map[string]string{
+			"8999801234567890123": "+998901234567",
+		},
 	}
-	for _, tt := range tests {
-		if got := isRoaming(tt.state); got != tt.want {
-			t.Fatalf("isRoaming(%q) = %v, want %v", tt.state, got, tt.want)
-		}
+	line := ResolveLine(cfg, "8999801234567890123F")
+	if line.Number != "+998901234567" || line.Source != LineSourceSimNumbers {
+		t.Fatalf("got %+v", line)
 	}
 }
 
-func TestShouldQueryPhoneUSSD(t *testing.T) {
-	if shouldQueryPhoneUSSD("*148#", "registered (roaming)") {
-		t.Fatal("expected USSD skip while roaming")
+func TestResolveLineUnmapped(t *testing.T) {
+	line := ResolveLine(config.Config{}, "8999809999999999999")
+	if line.Source != LineSourceUnmapped || line.ICCID != "8999809999999999999" {
+		t.Fatalf("got %+v", line)
 	}
-	if !shouldQueryPhoneUSSD("*148#", "registered (home)") {
-		t.Fatal("expected USSD on home network")
+}
+
+func TestResolveLineNoICCID(t *testing.T) {
+	line := ResolveLine(config.Config{}, "")
+	if line.Source != LineSourceNoICCID {
+		t.Fatalf("got %+v", line)
 	}
-	if shouldQueryPhoneUSSD("", "registered (home)") {
-		t.Fatal("expected no USSD without code")
+}
+
+func TestFormatPhoneStatus(t *testing.T) {
+	if got := FormatPhoneStatus(ResolvedLine{Number: "+998901234567", Source: LineSourceSimNumbers}); got != "+998901234567 (sim_numbers)" {
+		t.Fatalf("got %q", got)
+	}
+	if got := FormatPhoneStatus(ResolvedLine{ICCID: "8999801234567890123", Source: LineSourceUnmapped}); got != "unknown (iccid 8999801234567890123 not in sim_numbers)" {
+		t.Fatalf("got %q", got)
 	}
 }

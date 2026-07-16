@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/legion/sms-gateway/internal/config"
@@ -43,6 +44,25 @@ forward_rules:
 	}
 	if cfg.Channels["my-telegram"].Telegram.BotToken != "test-token" {
 		t.Fatalf("token not applied from env")
+	}
+}
+
+func TestRejectLegacyPhoneNumber(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	content := `
+driver: mm
+modems:
+  m1:
+    driver: mm
+    phone_number: "+998901234567"
+`
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := config.Load(config.Overrides{ConfigPath: path})
+	if err == nil || !strings.Contains(err.Error(), "phone_number is removed") {
+		t.Fatalf("err=%v", err)
 	}
 }
 

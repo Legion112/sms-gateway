@@ -17,9 +17,12 @@ func (a *telegramBotAdapter) Ping(ctx context.Context) error {
 }
 func (a *telegramBotAdapter) Forward(ctx context.Context, msg InboundSMS) error {
 	return a.inner.Forward(ctx, telegrambot.SMSMessage{
-		From: msg.From,
-		Text: msg.Text,
-		Time: msg.Time,
+		Modem:   msg.Modem,
+		From:    msg.From,
+		ToLine:  msg.ToLine,
+		ToICCID: msg.ToICCID,
+		Text:    msg.Text,
+		Time:    msg.Time,
 	})
 }
 func (a *telegramBotAdapter) SendTest(ctx context.Context, text string) error {

@@ -16,6 +16,8 @@ type ModemInfo struct {
 	Path         string
 	Manufacturer string
 	Model        string
+	ICCID        string
+	IMSI         string
 }
 
 // ListModems returns modems present on the system D-Bus, sorted by path.
@@ -41,7 +43,7 @@ func ListModems(ctx context.Context, timeout time.Duration) ([]ModemInfo, error)
 			Path:  string(path),
 		}
 		props, err := getObjectProperties(ctx, conn, path, modemInterface, []string{
-			"Manufacturer", "Model",
+			"Manufacturer", "Model", "Sim",
 		})
 		if err == nil {
 			if v, ok := props["Manufacturer"]; ok {
@@ -49,6 +51,14 @@ func ListModems(ctx context.Context, timeout time.Duration) ([]ModemInfo, error)
 			}
 			if v, ok := props["Model"]; ok {
 				info.Model = variantString(v)
+			}
+			simPath := variantObjectPath(props["Sim"])
+			if simPath != "" && simPath != "/" {
+				simProps, simErr := getObjectProperties(ctx, conn, simPath, simInterface, []string{"SimIdentifier", "Imsi"})
+				if simErr == nil {
+					info.ICCID = variantString(simProps["SimIdentifier"])
+					info.IMSI = variantString(simProps["Imsi"])
+				}
 			}
 		}
 		modems = append(modems, info)

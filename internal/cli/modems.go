@@ -80,6 +80,12 @@ func runModemsList(flags cmdutil.Flags, discover bool) error {
 		if m.Model != "" {
 			fmt.Printf("  model: %s\n", m.Model)
 		}
+		if m.ICCID != "" {
+			fmt.Printf("  iccid: %s\n", config.NormalizeICCID(m.ICCID))
+		}
+		if m.IMSI != "" {
+			fmt.Printf("  imsi: %s\n", m.IMSI)
+		}
 		fmt.Println("  ---")
 	}
 	return nil

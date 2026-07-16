@@ -1,56 +1,52 @@
 package cmdutil
 
 import (
-	"context"
-	"strings"
-	"time"
-
 	"github.com/legion/sms-gateway/internal/config"
-	"github.com/legion/sms-gateway/internal/modem"
 )
 
-// ResolvePhoneNumber returns the best-known line number for a modem.
-// Order: SIM/modem report, config phone_number, optional USSD query.
-// USSD is skipped while roaming (carrier USSD is slow and usually unavailable).
-func ResolvePhoneNumber(_ context.Context, base config.Config, target ModemHandle, reported, networkState string) string {
-	if reported != "" {
-		return reported
-	}
-	entry := modemEntry(base, target.Name)
-	if entry.PhoneNumber != "" {
-		return entry.PhoneNumber
-	}
-	if entry.PhoneUSSD == "" || !shouldQueryPhoneUSSD(entry.PhoneUSSD, networkState) {
-		return ""
-	}
-	querier, ok := target.Modem.(modem.PhoneQuerier)
-	if !ok {
-		return ""
-	}
-	ussdCtx, cancel := context.WithTimeout(context.Background(), 35*time.Second)
-	defer cancel()
-	phone, err := querier.QueryPhoneUSSD(ussdCtx, entry.PhoneUSSD)
-	if err != nil || phone == "" {
-		return ""
-	}
-	return phone
+// LineSource identifies how the subscriber line number was resolved.
+type LineSource string
+
+const (
+	LineSourceSimNumbers LineSource = "sim_numbers"
+	LineSourceUnmapped   LineSource = "unmapped"
+	LineSourceNoICCID    LineSource = "no_iccid"
+)
+
+// ResolvedLine is the SIM-centric line number for a modem's inserted SIM.
+type ResolvedLine struct {
+	Number string
+	Source LineSource
+	ICCID  string
 }
 
-func modemEntry(base config.Config, name string) config.ModemEntry {
-	if name == "" {
-		return config.ModemEntry{}
+// ResolveLine returns the MSISDN for the inserted SIM via sim_numbers only.
+func ResolveLine(cfg config.Config, iccid string) ResolvedLine {
+	normalized := config.NormalizeICCID(iccid)
+	if normalized == "" {
+		return ResolvedLine{Source: LineSourceNoICCID}
 	}
-	entry, ok := base.Modems[name]
-	if !ok {
-		return config.ModemEntry{}
+	if number := cfg.LookupSimNumber(normalized); number != "" {
+		return ResolvedLine{
+			Number: number,
+			Source: LineSourceSimNumbers,
+			ICCID:  normalized,
+		}
 	}
-	return entry
+	return ResolvedLine{
+		Source: LineSourceUnmapped,
+		ICCID:  normalized,
+	}
 }
 
-func isRoaming(networkState string) bool {
-	return strings.Contains(strings.ToLower(networkState), "roaming")
-}
-
-func shouldQueryPhoneUSSD(phoneUSSD, networkState string) bool {
-	return phoneUSSD != "" && !isRoaming(networkState)
+// FormatPhoneStatus formats phone line for CLI status output.
+func FormatPhoneStatus(line ResolvedLine) string {
+	switch line.Source {
+	case LineSourceSimNumbers:
+		return line.Number + " (sim_numbers)"
+	case LineSourceUnmapped:
+		return "unknown (iccid " + line.ICCID + " not in sim_numbers)"
+	default:
+		return "unknown"
+	}
 }

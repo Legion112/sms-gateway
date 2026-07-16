@@ -24,6 +24,21 @@ func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 	cnumResp, _ := d.exec(ctx, "AT+CNUM")
 	phoneNumber := parseCNUM(cnumResp)
 
+	var iccid, imsi string
+	if simStatus == "ready" || simRaw == "READY" {
+		if qccidResp, err := d.exec(ctx, "AT+QCCID"); err == nil {
+			iccid = parseICCID(qccidResp)
+		}
+		if iccid == "" {
+			if ccidResp, err := d.exec(ctx, "AT+CCID"); err == nil {
+				iccid = parseICCID(ccidResp)
+			}
+		}
+		if cimiResp, err := d.exec(ctx, "AT+CIMI"); err == nil {
+			imsi = parseCIMI(cimiResp)
+		}
+	}
+
 	cregResp, _ := d.exec(ctx, "AT+CREG?")
 	cgregResp, _ := d.exec(ctx, "AT+CGREG?")
 	ceregResp, _ := d.exec(ctx, "AT+CEREG?")
@@ -59,12 +74,23 @@ func (d *Driver) SMSStatus(ctx context.Context) (modem.SMSStatus, error) {
 	if ceregState != networkState && ceregState != "unknown" {
 		detailParts = append(detailParts, fmt.Sprintf("cereg=%s", ceregState))
 	}
+	if iccid != "" {
+		detailParts = append(detailParts, fmt.Sprintf("iccid=%s", iccid))
+	}
+	if imsi != "" {
+		detailParts = append(detailParts, fmt.Sprintf("imsi=%s", imsi))
+	}
+	if phoneNumber != "" {
+		detailParts = append(detailParts, fmt.Sprintf("reported_msisdn=%s", phoneNumber))
+	}
 	detail := strings.Join(detailParts, ", ")
 
 	return modem.SMSStatus{
 		Driver:       modem.DriverSerial,
 		Device:       d.device,
 		SimStatus:    simStatus,
+		ICCID:        iccid,
+		IMSI:         imsi,
 		PhoneNumber:  phoneNumber,
 		NetworkState: networkState,
 		ModemState:   "at",
