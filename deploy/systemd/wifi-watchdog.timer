@@ -1,0 +1,12 @@
+[Unit]
+Description=Run WiFi reconnect watchdog every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Persistent=true
+Unit=wifi-watchdog.service
+
+[Install]
+WantedBy=timers.target

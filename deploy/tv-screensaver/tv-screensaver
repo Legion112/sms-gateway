@@ -1,0 +1,91 @@
+#!/bin/bash
+# Pretty animations for the HDMI text console (tty1).
+# Ctrl+C exits to the shell. Switch mode: TV_ANIMATION=clock|matrix|bonsai|pipes|cycle
+set -euo pipefail
+
+MODE="${TV_ANIMATION:-cycle}"
+
+cleanup() {
+	tput cnorm 2>/dev/null || true
+	tput sgr0 2>/dev/null || true
+	clear
+}
+trap cleanup EXIT INT TERM
+
+hide_cursor() {
+	tput civis 2>/dev/null || true
+}
+
+run_pipes() {
+	hide_cursor
+	# Colorful pipes; -R resets periodically so it doesn't fill forever messily
+	exec pipes.sh -t 0 -t 1 -t 2 -t 3 -t 4 -t 5 -t 6 -t 7 -f 20 -s 15 -r 8000
+}
+
+run_matrix() {
+	hide_cursor
+	exec cmatrix -b -u 3 -C cyan
+}
+
+run_clock() {
+	hide_cursor
+	exec tty-clock -s -c -C 6 -f "%a %d %b %Y"
+}
+
+run_bonsai() {
+	hide_cursor
+	# Live grow, then wait, loop
+	while true; do
+		clear
+		cbonsai -l -i -t 0.02 -L 40 -M 5 || cbonsai -l -i
+		sleep 8
+	done
+}
+
+run_cycle() {
+	# Rotate looks every few minutes for a TV ambient display
+	local apps=(pipes matrix clock bonsai)
+	local i=0
+	while true; do
+		local app="${apps[$i]}"
+		i=$(( (i + 1) % ${#apps[@]} ))
+		case "$app" in
+		pipes)
+			timeout 180 pipes.sh -t 0 -t 1 -t 2 -t 3 -t 4 -t 5 -t 6 -t 7 -f 20 -s 15 -r 0 || true
+			;;
+		matrix)
+			timeout 120 cmatrix -b -u 3 -C cyan || true
+			;;
+		clock)
+			timeout 90 tty-clock -s -c -C 6 -f "%a %d %b %Y" || true
+			;;
+		bonsai)
+			timeout 90 bash -c 'cbonsai -l -i -t 0.02 -L 40 || cbonsai -l -i; sleep 60' || true
+			;;
+		esac
+		clear
+	done
+}
+
+clear
+cat <<EOF
+┌──────────────────────────────────────────┐
+│  first-pi TV console                     │
+│  Ctrl+C → shell                          │
+│  Mode: $MODE  (TV_ANIMATION=...)         │
+└──────────────────────────────────────────┘
+EOF
+sleep 1
+clear
+
+case "$MODE" in
+pipes) run_pipes ;;
+matrix) run_matrix ;;
+clock) run_clock ;;
+bonsai) run_bonsai ;;
+cycle) run_cycle ;;
+*)
+	echo "Unknown TV_ANIMATION=$MODE (use cycle|pipes|matrix|clock|bonsai)" >&2
+	exit 1
+	;;
+esac

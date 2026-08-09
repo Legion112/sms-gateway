@@ -1,0 +1,11 @@
+[Unit]
+Description=WiFi reconnect watchdog (nmcli / NetworkManager)
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-watchdog.sh
+# Needs root for nmcli device ops and systemctl restart NetworkManager
+User=root
+Nice=10
