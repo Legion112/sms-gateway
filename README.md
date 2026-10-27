@@ -456,7 +456,19 @@ config.example.yaml       Example configuration
 deploy/env.pi.example     Pi env file template (bot token)
 deploy/systemd/           systemd units (watch daemon, SSH tunnel)
 deploy/udev/              Optional udev rules for serial driver
+.github/workflows/ci.yml  CI: gofmt, build, vet, race tests, arm64 cross-build
 ```
+
+Every push to `master` and every pull request runs the same five checks you can
+run locally:
+
+```bash
+gofmt -l . && go build ./... && go vet ./... && go test ./... -race && GOOS=linux GOARCH=arm64 go build ./cmd/...
+```
+
+The race detector is not optional here: the watch daemon runs one goroutine per
+modem plus a health reporter over shared state. The arm64 cross-build guards the
+only machine that actually matters, the Pi.
 
 ## Roadmap
 

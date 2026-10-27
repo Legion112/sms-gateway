@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: build, vet and test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Printed first so a failure names the offending files rather than only
+      # failing the exit status.
+      - name: Check formatting
+        run: |
+          gofmt -l .
+          test -z "$(gofmt -l .)"
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      # -race matters here: the watch daemon supervises one goroutine per modem
+      # plus a health reporter, and they share the health map.
+      - name: Test
+        run: go test ./... -race -count=1
+
+      # The gateway runs on a Raspberry Pi. Cross-compiling for it keeps an
+      # arch-specific break from reaching the only machine that matters.
+      - name: Cross-compile for the Pi (linux/arm64)
+        env:
+          GOOS: linux
+          GOARCH: arm64
+        run: go build ./cmd/...
