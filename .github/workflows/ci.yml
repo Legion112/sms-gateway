@@ -9,6 +9,12 @@ on:
 permissions:
   contents: read
 
+# A push that lands while an earlier run is still going makes that run's result
+# meaningless, so cancel it rather than paying for both.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     name: build, vet and test
@@ -31,8 +37,10 @@ jobs:
       - name: Build
         run: go build ./...
 
+      # Both invocations: the default one does not vet the integration-tagged
+      # files, which is where the serial lab lives.
       - name: Vet
-        run: go vet ./...
+        run: make vet
 
       # -race matters here: the watch daemon supervises one goroutine per modem
       # plus a health reporter, and they share the health map.
@@ -46,3 +54,39 @@ jobs:
           GOOS: linux
           GOARCH: arm64
         run: go build ./cmd/...
+
+  lab:
+    name: serial lab
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The lab opens /dev/ptmx and hands the real serial driver a pts node it
+      # then deletes mid-test. Checked up front so a missing devpts fails here,
+      # naming the cause, rather than inside a test as a timeout.
+      - name: pseudo-terminal support
+        run: test -c /dev/ptmx || { echo "::error::/dev/ptmx missing, the serial lab cannot run"; exit 1; }
+
+      # Run verbosely and judge the same output twice. A Go exit code does not
+      # distinguish "passed" from "skipped itself", and a lab that skips looks
+      # green while covering nothing.
+      - name: serial lab
+        run: |
+          set -o pipefail
+          go test -tags=integration -count=1 -timeout 5m -v ./test/integration/... 2>&1 | tee /tmp/lab.log
+
+      - name: no lab silently skipped
+        if: always()
+        run: |
+          if grep -q -- '--- SKIP' /tmp/lab.log; then
+            echo "::error::a lab skipped itself instead of running:"
+            grep -B1 -- '--- SKIP' /tmp/lab.log
+            exit 1
+          fi
+          echo "labs that ran: $(grep -c -- '--- PASS' /tmp/lab.log)"

@@ -463,14 +463,29 @@ config.example.yaml       Example configuration
 deploy/env.pi.example     Pi env file template (bot token)
 deploy/systemd/           systemd units (watch daemon, SSH tunnel)
 deploy/udev/              Optional udev rules for serial driver
-.github/workflows/ci.yml  CI: gofmt, build, vet, race tests, arm64 cross-build
+test/integration/         Serial lab: real driver against a pseudo-terminal
+.github/workflows/ci.yml  CI: gofmt, build, vet, race tests, arm64 cross-build, lab
 ```
+
+### The serial lab
+
+`make test-integration` runs the real serial driver against a fake EC25 that
+speaks AT over a pseudo-terminal, reached through a device node the test can
+delete and recreate. That is the one thing the unit tests cannot reach: they
+prove the supervisor reconnects when a *fake* modem returns an error, not when
+the device node vanishes and comes back as a different `pts` — which is what a
+USB re-enumeration does, and is the failure that took a SIM out of service.
+
+It is behind the `integration` build tag and needs `/dev/ptmx`, so `make test`
+does not run it. The lab fails rather than skips when `/dev/ptmx` is missing: a
+lab that skips itself looks green while covering nothing.
 
 Every push to `master` and every pull request runs the same five checks you can
 run locally:
 
 ```bash
-gofmt -l . && go build ./... && go vet ./... && go test ./... -race && GOOS=linux GOARCH=arm64 go build ./cmd/...
+gofmt -l . && go build ./... && make vet && go test ./... -race && GOOS=linux GOARCH=arm64 go build ./cmd/...
+make test-integration
 ```
 
 The race detector is not optional here: the watch daemon runs one goroutine per

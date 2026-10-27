@@ -1,4 +1,4 @@
-.PHONY: build clean deploy_pi deploy-tunnel deploy-watch install-tunnel-service install-watch-service install-watch-pi
+.PHONY: build clean test test-integration vet deploy_pi deploy-tunnel deploy-watch install-tunnel-service install-watch-service install-watch-pi
 
 BIN_DIR := bin
 BINS := sms-gateway sms-gateway-watch
@@ -16,6 +16,22 @@ $(BIN_DIR)/%: $(GO_SRC)
 
 clean:
 	rm -rf $(BIN_DIR)
+
+test:
+	go test ./... -race -count=1
+
+# The serial lab runs the real driver against a pseudo-terminal whose device
+# node is removed mid-test, which is the USB re-enumeration the unit tests
+# cannot reproduce. Needs /dev/ptmx and the integration build tag, so it is
+# deliberately not part of `make test`.
+test-integration:
+	go test -tags=integration -count=1 -timeout 5m ./test/integration/...
+
+# Both invocations: the default one does not vet the integration-tagged files,
+# which is where the lab lives.
+vet:
+	go vet ./...
+	go vet -tags=integration ./test/...
 
 deploy_pi:
 	rsync -avz --exclude='bin/' --exclude='config.yaml' --exclude='data/' ./ $(PI_HOST):$(PI_DIR)
