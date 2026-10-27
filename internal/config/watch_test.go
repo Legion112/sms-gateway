@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -198,5 +199,77 @@ func TestLivenessSettingsRejectBadValues(t *testing.T) {
 				t.Fatal("expected config load to fail")
 			}
 		})
+	}
+}
+
+func TestAlertsDefaults(t *testing.T) {
+	cfg, err := config.Load(config.Overrides{ConfigPath: writeWatchConfig(t, "")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.AlertAfter(); got != 5*time.Minute {
+		t.Errorf("alerts.after default = %s want 5m", got)
+	}
+	if cfg.AlertsEnabled() {
+		t.Error("alerting should be off when no channels are listed")
+	}
+}
+
+func TestAlertsLoad(t *testing.T) {
+	path := writeWatchConfig(t, "")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content = append(content, []byte("\nalerts:\n  after: 90s\n  channels: [tg]\n")...)
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := config.Load(config.Overrides{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.AlertAfter(); got != 90*time.Second {
+		t.Errorf("alerts.after = %s want 90s", got)
+	}
+	if !cfg.AlertsEnabled() {
+		t.Error("alerting should be on")
+	}
+	if len(cfg.Alerts.Channels) != 1 || cfg.Alerts.Channels[0] != "tg" {
+		t.Errorf("channels = %v", cfg.Alerts.Channels)
+	}
+}
+
+// TestAlertsRejectUnknownChannel: a typo here is silent in the worst way,
+// so it must fail at load rather than on the day a modem dies.
+func TestAlertsRejectUnknownChannel(t *testing.T) {
+	cfg := config.Config{
+		Modems:   map[string]config.ModemEntry{"m1": {Driver: config.DriverMM}},
+		Channels: map[string]config.ChannelConfig{"tg": {Driver: "telegram_bot", Telegram: config.TelegramChannelConfig{ChatID: 1, BotToken: "x"}}},
+		ForwardRules: []config.ForwardRule{
+			{Name: "all", Modem: "m1", To: []string{"tg"}},
+		},
+		Storage: config.StorageConfig{Path: "./data/sms.db"},
+		Alerts:  config.AlertsConfig{Channels: []string{"typo-telegram"}},
+	}
+	err := config.ValidateWatch(cfg)
+	if err == nil {
+		t.Fatal("expected an error for an alert channel that does not exist")
+	}
+	if !strings.Contains(err.Error(), "typo-telegram") {
+		t.Errorf("error %v should name the bad channel", err)
+	}
+}
+
+func TestAlertsRejectNegativeAfter(t *testing.T) {
+	path := writeWatchConfig(t, "")
+	content, _ := os.ReadFile(path)
+	content = append(content, []byte("\nalerts:\n  after: -5m\n")...)
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Load(config.Overrides{ConfigPath: path}); err == nil {
+		t.Fatal("expected a negative alerts.after to fail")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/legion/sms-gateway/internal/alert"
 	"github.com/legion/sms-gateway/internal/config"
 )
 
@@ -89,27 +90,81 @@ func (s *Service) reconnectResetAfter() time.Duration {
 func (s *Service) superviseHealth(ctx context.Context) {
 	stall := s.cfg.StallTimeout()
 	heartbeat := s.cfg.HealthInterval()
+	alertAfter := s.cfg.AlertAfter()
 
-	tick := stall / 2
-	if tick <= 0 || (heartbeat > 0 && heartbeat < tick) {
+	// Tick fast enough to serve whichever signal needs it soonest: an alert
+	// threshold of five minutes is only honoured to within one tick.
+	tick := halve(stall)
+	if d := halve(alertAfter); s.deps.Alerts != nil && d > 0 && (tick <= 0 || d < tick) {
+		tick = d
+	}
+	if heartbeat > 0 && (tick <= 0 || heartbeat < tick) {
 		tick = heartbeat
 	}
 	if tick <= 0 {
 		return
 	}
 
+	var monitor *alert.Monitor
+	if s.deps.Alerts != nil {
+		monitor = alert.NewMonitor(alertAfter)
+	}
+
 	lastBeat := s.now()
 	for {
 		if !s.sleep(ctx, tick) {
+			// Shutting down: one last attempt to get a queued alert out, with
+			// a fresh deadline since ctx is already done.
+			s.flushAlerts()
 			return
 		}
 		now := s.now()
 		s.checkStalls(now, stall)
+		s.runAlerts(ctx, monitor, now)
 		if heartbeat > 0 && now.Sub(lastBeat) >= heartbeat {
 			lastBeat = now
 			s.logHealth(now)
 		}
 	}
+}
+
+func halve(d time.Duration) time.Duration {
+	if d <= 0 {
+		return 0
+	}
+	return d / 2
+}
+
+// runAlerts turns the current health into events and delivers them. Flush runs
+// on every tick, not only when there is something new, because that is also the
+// retry for an alert an earlier tick could not get out.
+func (s *Service) runAlerts(ctx context.Context, monitor *alert.Monitor, now time.Time) {
+	if monitor == nil || s.deps.Alerts == nil {
+		return
+	}
+	s.deps.Alerts.Enqueue(monitor.Evaluate(now, s.observations())...)
+	s.deps.Alerts.Flush(ctx)
+}
+
+// observations reports when each modem was last known to be working.
+func (s *Service) observations() []alert.Observation {
+	names := s.modemNames()
+	out := make([]alert.Observation, 0, len(names))
+	for _, name := range names {
+		out = append(out, alert.Observation{Subject: name, LastOK: s.healthSnapshot(name).lastPollOK})
+	}
+	return out
+}
+
+// flushAlerts delivers anything still queued, on a deadline of its own so a
+// cancelled run context does not drop the last alert on the way out.
+func (s *Service) flushAlerts() {
+	if s.deps.Alerts == nil || s.deps.Alerts.PendingCount() == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	s.deps.Alerts.Flush(ctx)
 }
 
 func (s *Service) checkStalls(now time.Time, stall time.Duration) {

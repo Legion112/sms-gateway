@@ -41,7 +41,7 @@ type failingChannel struct{}
 func (failingChannel) Name() string                           { return "bad" }
 func (failingChannel) Driver() string                         { return "bad" }
 func (failingChannel) Ping(context.Context) error             { return nil }
-func (failingChannel) SendTest(context.Context, string) error { return nil }
+func (failingChannel) SendText(context.Context, string) error { return nil }
 func (failingChannel) Close() error                           { return nil }
 func (failingChannel) Forward(context.Context, forward.InboundSMS) error {
 	return fmt.Errorf("telegram unreachable")
@@ -198,7 +198,7 @@ type flakyChannel struct {
 func (f *flakyChannel) Name() string                           { return "flaky" }
 func (f *flakyChannel) Driver() string                         { return "flaky" }
 func (f *flakyChannel) Ping(context.Context) error             { return nil }
-func (f *flakyChannel) SendTest(context.Context, string) error { return nil }
+func (f *flakyChannel) SendText(context.Context, string) error { return nil }
 func (f *flakyChannel) Close() error                           { return nil }
 func (f *flakyChannel) Forward(context.Context, forward.InboundSMS) error {
 	if f.fail {

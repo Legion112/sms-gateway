@@ -92,6 +92,10 @@ func ValidateWatch(cfg Config) error {
 			seen[chName] = struct{}{}
 		}
 	}
+	if err := ValidateAlerts(cfg); err != nil {
+		return err
+	}
+
 	for chName := range seen {
 		ch, ok := cfg.Channels[chName]
 		if !ok {

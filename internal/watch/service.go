@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/legion/sms-gateway/internal/alert"
 	"github.com/legion/sms-gateway/internal/cmdutil"
 	"github.com/legion/sms-gateway/internal/config"
 	"github.com/legion/sms-gateway/internal/factory"
@@ -24,6 +25,9 @@ type Dependencies struct {
 	Router   *forward.Router
 	Channels map[string]forward.Channel
 	Log      func(format string, args ...any)
+	// Alerts reports modem outages to an operator. Nil switches alerting off,
+	// which is the default: a gateway with nowhere to send alerts still works.
+	Alerts *alert.Dispatcher
 }
 
 // Service runs the SMS watch and forward pipeline.

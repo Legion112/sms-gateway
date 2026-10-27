@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/legion/sms-gateway/internal/alert"
 	"github.com/legion/sms-gateway/internal/config"
 	"github.com/legion/sms-gateway/internal/forward"
 	"github.com/legion/sms-gateway/internal/storage"
@@ -39,7 +40,7 @@ type captureChannel struct {
 func (c *captureChannel) Name() string                           { return "lab" }
 func (c *captureChannel) Driver() string                         { return "lab" }
 func (c *captureChannel) Ping(context.Context) error             { return nil }
-func (c *captureChannel) SendTest(context.Context, string) error { return nil }
+func (c *captureChannel) SendText(context.Context, string) error { return nil }
 func (c *captureChannel) Close() error                           { return nil }
 
 func (c *captureChannel) Forward(_ context.Context, msg forward.InboundSMS) error {
@@ -256,5 +257,132 @@ func TestSerialModemSlotFreedOverRealTTY(t *testing.T) {
 	}
 	if l.sim.Stored() != 0 {
 		t.Fatalf("modem still holds %d messages", l.sim.Stored())
+	}
+}
+
+// alertSender captures operational alerts in the lab.
+type alertSender struct {
+	mu   sync.Mutex
+	sent []string
+}
+
+func (a *alertSender) Name() string { return "ops" }
+
+func (a *alertSender) SendText(_ context.Context, text string) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sent = append(a.sent, text)
+	return nil
+}
+
+func (a *alertSender) matching(substr string) int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	n := 0
+	for _, m := range a.sent {
+		if strings.Contains(m, substr) {
+			n++
+		}
+	}
+	return n
+}
+
+func (a *alertSender) all() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.sent...)
+}
+
+// TestAlertOnRealDeviceLossAndRecovery is the end-to-end proof of the feature:
+// a tty that really disappears produces a problem alert, and bringing it back
+// produces a recovery alert. Nothing here is faked above the device.
+func TestAlertOnRealDeviceLossAndRecovery(t *testing.T) {
+	requirePTY(t)
+
+	link := filepath.Join(t.TempDir(), "ttyLAB")
+	sim, err := harness.NewSerialModem(link)
+	if err != nil {
+		t.Fatalf("fake modem: %v", err)
+	}
+	t.Cleanup(sim.Close)
+
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	// A short threshold so the lab does not wait five real minutes; the policy
+	// itself is covered exhaustively by the unit tests in internal/alert.
+	const alertAfter = 1500 * time.Millisecond
+
+	cfg := config.Config{
+		Modems: map[string]config.ModemEntry{
+			"lab": {
+				Driver: config.DriverSerial,
+				Serial: config.SerialConfig{Device: link, BaudRate: 115200, Timeout: 500 * time.Millisecond},
+			},
+		},
+	}
+	cfg.Watch.SerialPollInterval = 150 * time.Millisecond
+	cfg.Watch.ReconnectInitial = 100 * time.Millisecond
+	cfg.Watch.ReconnectMax = 200 * time.Millisecond
+	cfg.Watch.StallTimeout = alertAfter
+	cfg.Watch.HealthInterval = time.Hour
+	cfg.Alerts.After = alertAfter
+	cfg.Alerts.Channels = []string{"ops"}
+
+	ops := &alertSender{}
+	lg := &labLog{}
+	svc := watch.NewService(cfg, watch.Dependencies{
+		Store:    store,
+		Router:   forward.NewRouter([]config.ForwardRule{{Name: "all", From: "*", To: []string{"lab"}}}),
+		Channels: map[string]forward.Channel{"lab": &captureChannel{}},
+		Log:      lg.logf,
+		Alerts:   alert.NewDispatcher(alert.NewChannelNotifier(ops), lg.logf),
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- svc.Run(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("Run did not return")
+		}
+	})
+
+	sim.AddMessage(1, pduHello)
+	if !waitUntil(func() bool { return lg.has("modem_up modem=lab") || lg.has("forwarded") }, 20*time.Second) {
+		t.Fatalf("modem never came up; log=%v", lg.all())
+	}
+
+	// Nothing wrong yet, so nobody should have been told anything.
+	if got := len(ops.all()); got != 0 {
+		t.Fatalf("alerted while healthy: %v", ops.all())
+	}
+
+	// Pull the device out and leave it out past the threshold.
+	sim.Unplug()
+	if !waitUntil(func() bool { return ops.matching("PROBLEM") == 1 }, 30*time.Second) {
+		t.Fatalf("no problem alert after real device loss: alerts=%v log=%v", ops.all(), lg.all())
+	}
+	if !strings.Contains(ops.all()[0], "lab") {
+		t.Fatalf("alert does not name the modem: %q", ops.all()[0])
+	}
+
+	// Put it back; the daemon reconnects on its own and says so.
+	if err := sim.Replug(); err != nil {
+		t.Fatalf("replug: %v", err)
+	}
+	if !waitUntil(func() bool { return ops.matching("RECOVERED") == 1 }, 30*time.Second) {
+		t.Fatalf("no recovery alert after the device returned: alerts=%v log=%v", ops.all(), lg.all())
+	}
+
+	// One of each, not a stream.
+	if got := ops.matching("PROBLEM"); got != 1 {
+		t.Fatalf("problem alerts = %d, want exactly 1: %v", got, ops.all())
 	}
 }

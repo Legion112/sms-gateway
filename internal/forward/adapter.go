@@ -25,7 +25,7 @@ func (a *telegramBotAdapter) Forward(ctx context.Context, msg InboundSMS) error 
 		Time:    msg.Time,
 	})
 }
-func (a *telegramBotAdapter) SendTest(ctx context.Context, text string) error {
+func (a *telegramBotAdapter) SendText(ctx context.Context, text string) error {
 	return a.inner.SendText(ctx, text)
 }
 func (a *telegramBotAdapter) Close() error { return a.inner.Close() }

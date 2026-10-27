@@ -62,7 +62,7 @@ func runChannelTest(root *cmdutil.Flags, f channelTestFlags, channelName string)
 		return err
 	}
 
-	if err := ch.SendTest(ctx, f.text); err != nil {
+	if err := ch.SendText(ctx, f.text); err != nil {
 		cmdutil.PrintError("status: failed")
 		cmdutil.PrintError("channel: %s", channelName)
 		cmdutil.PrintError("error: %v", err)

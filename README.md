@@ -194,6 +194,8 @@ Requires `modems`, `channels`, `forward_rules`, and `storage.path` in config (se
 | `watch.reconnect_max` | Cap on the reconnect backoff; retried at this interval forever (default 60s) |
 | `watch.stall_timeout` | Report a connected modem that has not completed a poll in this long (default 5m) |
 | `watch.health_interval` | How often to log a `modem_health` heartbeat per modem (default 30m) |
+| `alerts.after` | Report a modem silent this long (default 5m) |
+| `alerts.channels` | Channels operational alerts go to; empty switches alerting off |
 
 **Modem backends:**
 
@@ -399,6 +401,42 @@ To clear an existing backlog by hand:
 `prune` consults `storage.path` and only deletes slots the database shows as delivered
 on every channel; `--all` additionally deletes slots with no confirmed delivery.
 
+### Being told when a modem dies
+
+The journal shows an outage, but only if somebody is reading it. With `alerts`
+configured, a modem that has gone `alerts.after` without a successful poll is
+reported once:
+
+```
+sms-gateway PROBLEM
+modem ec25-main has not polled for 5m2s
+
+SMS to that SIM are not being received.
+```
+
+and when it starts polling again:
+
+```
+sms-gateway RECOVERED
+modem ec25-main is polling again after 7m14s
+```
+
+One message per outage, not one per check, and the recovery reports the whole
+outage rather than its tail. A modem that has never polled is measured from
+daemon start, so a restart does not read as an outage stretching back to the
+epoch.
+
+A failed send is retried on the next check rather than dropped — Telegram being
+unreachable is a plausible reason the gateway is in trouble in the first place —
+and a queued alert is flushed on shutdown, so a restart does not swallow the
+alert explaining why the restart was needed.
+
+The decision and the delivery are separate on purpose. `internal/alert` decides
+(pure, no clock, no I/O, no Telegram) and `alert.Notifier` delivers. Today that
+is `ChannelNotifier`, writing to the forward channels named in
+`alerts.channels`; a standalone notification service replaces it by implementing
+`Notifier`, and the policy does not move.
+
 ### A SIM goes silent while the daemon looks healthy
 
 Before the liveness work, any error inside a modem's watch loop — a USB re-enumeration,
@@ -458,6 +496,7 @@ internal/forward/         Forward channel interface, router, factory
 internal/forward/telegrambot/  Telegram Bot API driver
 internal/storage/         SQLite message and delivery store
 internal/watch/           Watch daemon orchestration
+internal/alert/           Modem outage policy and alert delivery
 cmd/sms-gateway-watch/    Watch daemon binary
 config.example.yaml       Example configuration
 deploy/env.pi.example     Pi env file template (bot token)

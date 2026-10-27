@@ -23,7 +23,7 @@ func (m *mockChannel) Forward(context.Context, forward.InboundSMS) error {
 	m.forwards++
 	return nil
 }
-func (m *mockChannel) SendTest(context.Context, string) error { return nil }
+func (m *mockChannel) SendText(context.Context, string) error { return nil }
 func (m *mockChannel) Close() error                           { return nil }
 
 func TestIngestReusesStorageIndexSameTimestamp(t *testing.T) {

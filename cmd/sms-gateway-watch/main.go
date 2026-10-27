@@ -9,6 +9,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/legion/sms-gateway/internal/alert"
 	"github.com/legion/sms-gateway/internal/config"
 	"github.com/legion/sms-gateway/internal/forward"
 	"github.com/legion/sms-gateway/internal/storage"
@@ -57,6 +58,7 @@ func run() int {
 		Router:   router,
 		Channels: channels,
 		Log:      log.Printf,
+		Alerts:   newAlertDispatcher(cfg, channels),
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -70,6 +72,37 @@ func run() int {
 	}
 	log.Printf("sms-gateway-watch: stopped")
 	return 0
+}
+
+// newAlertDispatcher wires operational alerts to the configured channels, or
+// returns nil when none are configured, which switches alerting off.
+//
+// Everything is one binary today, so an alert leaves through the same Telegram
+// channel that carries forwarded SMS. When a separate notification service
+// arrives, only the Notifier passed here changes.
+func newAlertDispatcher(cfg config.Config, channels map[string]forward.Channel) *alert.Dispatcher {
+	if !cfg.AlertsEnabled() {
+		log.Printf("alerts: no channels configured, modem outages will only be logged")
+		return nil
+	}
+	senders := make([]alert.TextSender, 0, len(cfg.Alerts.Channels))
+	for _, name := range cfg.Alerts.Channels {
+		ch, ok := channels[name]
+		if !ok {
+			// ValidateAlerts rejects this at load, so reaching here means the
+			// channel failed to build; say so rather than alerting into a void.
+			log.Printf("alerts: channel %s unavailable", name)
+			continue
+		}
+		senders = append(senders, ch)
+	}
+	d := alert.NewDispatcher(alert.NewChannelNotifier(senders...), log.Printf)
+	if d == nil {
+		log.Printf("alerts: no usable channels, modem outages will only be logged")
+		return nil
+	}
+	log.Printf("alerts: modem silence over %s reported to %v", cfg.AlertAfter(), cfg.Alerts.Channels)
+	return d
 }
 
 func closeChannels(channels map[string]forward.Channel) {

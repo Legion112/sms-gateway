@@ -206,7 +206,7 @@ type countingChannel struct {
 func (c *countingChannel) Name() string                           { return "tg" }
 func (c *countingChannel) Driver() string                         { return "mock" }
 func (c *countingChannel) Ping(context.Context) error             { return nil }
-func (c *countingChannel) SendTest(context.Context, string) error { return nil }
+func (c *countingChannel) SendText(context.Context, string) error { return nil }
 func (c *countingChannel) Close() error                           { return nil }
 
 func (c *countingChannel) Forward(_ context.Context, msg forward.InboundSMS) error {

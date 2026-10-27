@@ -110,3 +110,16 @@ watch:
   # Heartbeat so the journal carries positive proof that reception is alive
   # rather than only ever showing failures.
   health_interval: 30m
+
+# --- Operational alerts (about the gateway itself, not received SMS) ---
+#
+# A modem that has not completed a poll for `after` is reported once, and
+# reported again when it starts polling. Leave `channels` empty to switch
+# alerting off; modem outages are then only visible in the journal.
+#
+# Today alerts leave through the forward channels listed here, because
+# everything is one binary. The transport sits behind an interface, so pointing
+# this at a separate notification service later does not touch the policy.
+alerts:
+  after: 5m
+  channels: [my-telegram]
