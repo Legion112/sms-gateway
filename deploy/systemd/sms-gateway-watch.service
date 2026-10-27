@@ -2,12 +2,16 @@
 Description=SMS Gateway watch daemon (forward incoming SMS)
 After=network.target ModemManager.service
 Wants=ModemManager.service
+# Never stop trying. The default start limit gives up after 5 restarts in 10s
+# and leaves the gateway down until someone notices.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/sms-gateway-watch
 EnvironmentFile=-/etc/sms-gateway/env
-Restart=on-failure
+# always, not on-failure: a clean exit still means no SMS are being received.
+Restart=always
 RestartSec=5
 
 [Install]

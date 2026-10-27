@@ -95,3 +95,18 @@ watch:
   # The local database keeps the message, so nothing is lost. Without this the
   # modem fills up (EC25 holds 255) and then silently refuses new SMS.
   delete_after_forward: true
+
+  # --- Liveness ---
+  # A modem whose watch loop fails is reopened rather than abandoned, so a USB
+  # hiccup or a modem that stops answering AT can never take a SIM out of
+  # service until the next manual restart. The delay doubles from
+  # reconnect_initial up to reconnect_max and then retries at that interval
+  # forever: the daemon never gives up on a SIM.
+  reconnect_initial: 2s
+  reconnect_max: 60s
+  # A modem that is open but has completed no poll in this long is reported as
+  # modem_stalled, and modem_recovered once polling resumes.
+  stall_timeout: 5m
+  # Heartbeat so the journal carries positive proof that reception is alive
+  # rather than only ever showing failures.
+  health_interval: 30m

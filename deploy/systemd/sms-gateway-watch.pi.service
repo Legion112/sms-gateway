@@ -1,15 +1,22 @@
 [Unit]
 Description=SMS Gateway watch daemon (forward incoming SMS)
 After=network-online.target sms-tunnel.service
-Wants=network-online.target
-Requires=sms-tunnel.service
+Wants=network-online.target sms-tunnel.service
+# Deliberately Wants= and not Requires=: the tunnel is only how messages leave
+# the Pi. Binding to it meant every tunnel restart stopped SMS reception as
+# well, which lost messages the modems had already received.
+#
+# Never stop trying. The default start limit gives up after 5 restarts in 10s
+# and leaves the gateway down until someone notices.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 WorkingDirectory=/home/legion/smsgateway
 ExecStart=/home/legion/smsgateway/bin/sms-gateway-watch
 EnvironmentFile=-/etc/sms-gateway/env
-Restart=on-failure
+# always, not on-failure: a clean exit still means no SMS are being received.
+Restart=always
 RestartSec=5
 
 [Install]

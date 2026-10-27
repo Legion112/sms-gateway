@@ -2,6 +2,7 @@ package watch
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -32,6 +33,15 @@ type Service struct {
 	mu       sync.Mutex
 	simMu    sync.RWMutex
 	simLines map[string]cmdutil.ResolvedLine
+
+	healthMu sync.Mutex
+	health   map[string]*modemHealth
+
+	// Test seams. Production leaves these nil and falls back to the real
+	// factory, clock and timer.
+	openFn  func(entry config.ModemEntry) (modem.Modem, error)
+	nowFn   func() time.Time
+	sleepFn func(ctx context.Context, d time.Duration) bool
 }
 
 // NewService creates a watch service.
@@ -42,51 +52,78 @@ func NewService(cfg config.Config, deps Dependencies) *Service {
 	return &Service{cfg: cfg, deps: deps}
 }
 
-// Run starts one goroutine per configured modem and blocks until ctx is cancelled.
+// Run supervises one goroutine per configured modem and blocks until ctx is
+// cancelled. A modem whose watch loop fails is reopened rather than abandoned,
+// so one dead modem can never silently take a SIM out of service while the
+// daemon keeps reporting healthy.
 func (s *Service) Run(ctx context.Context) error {
 	if len(s.cfg.Modems) == 0 {
 		return fmt.Errorf("no modems configured")
 	}
-	if s.cfg.Watch.CatchUpOnStart {
-		for name, entry := range s.cfg.Modems {
-			if err := s.catchUpModem(ctx, name, entry); err != nil && ctx.Err() == nil {
-				s.deps.Log("catch-up modem %s: %v", name, err)
-			}
-		}
-	}
-	errCh := make(chan error, len(s.cfg.Modems))
+
+	var (
+		wg     sync.WaitGroup
+		errMu  sync.Mutex
+		failed []error
+	)
 	for name, entry := range s.cfg.Modems {
+		wg.Add(1)
 		go func(modemName string, modemEntry config.ModemEntry) {
-			errCh <- s.runModem(ctx, modemName, modemEntry, false)
+			defer wg.Done()
+			err := s.superviseModem(ctx, modemName, modemEntry)
+			if err == nil || errors.Is(err, context.Canceled) {
+				return
+			}
+			errMu.Lock()
+			failed = append(failed, err)
+			errMu.Unlock()
 		}(name, entry)
 	}
-	var firstErr error
-	for range s.cfg.Modems {
-		if err := <-errCh; err != nil && err != context.Canceled && firstErr == nil {
-			firstErr = err
-		}
+	// Health reporting follows the modems rather than keeping Run alive on its
+	// own: if every modem is abandoned the daemon must exit, not linger with
+	// nothing watching.
+	healthCtx, stopHealth := context.WithCancel(ctx)
+	healthDone := make(chan struct{})
+	go func() {
+		defer close(healthDone)
+		s.superviseHealth(healthCtx)
+	}()
+
+	wg.Wait()
+	stopHealth()
+	<-healthDone
+
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return firstErr
+	// Reached only when every modem gave up for a reason retrying cannot fix.
+	// Surfacing it exits non-zero instead of letting the daemon look like a
+	// clean shutdown while no SMS are being received.
+	errMu.Lock()
+	defer errMu.Unlock()
+	return errors.Join(failed...)
 }
 
-func (s *Service) catchUpModem(ctx context.Context, modemName string, entry config.ModemEntry) error {
-	m, err := factory.NewFromModemEntry(entry, s.cfg.Verbose)
-	if err != nil {
-		return fmt.Errorf("open: %w", err)
+// openModem builds a driver for one modem entry, through a seam so tests can
+// supply a fake without touching real hardware.
+func (s *Service) openModem(entry config.ModemEntry) (modem.Modem, error) {
+	if s.openFn != nil {
+		return s.openFn(entry)
 	}
-	defer m.Close()
-	if err := s.refreshSimLine(ctx, modemName, m); err != nil && ctx.Err() == nil {
-		s.deps.Log("sim lookup modem %s: %v", modemName, err)
-	}
-	return s.catchUp(ctx, modemName, m, s.slotDeleter(modemName, entry, m))
+	return factory.NewFromModemEntry(entry, s.cfg.Verbose)
 }
 
 func (s *Service) runModem(ctx context.Context, modemName string, entry config.ModemEntry, catchUp bool) error {
-	m, err := factory.NewFromModemEntry(entry, s.cfg.Verbose)
+	if entry.Driver != config.DriverMM && entry.Driver != config.DriverSerial {
+		return permanent("modem %s: unsupported driver %q", modemName, entry.Driver)
+	}
+
+	m, err := s.openModem(entry)
 	if err != nil {
 		return fmt.Errorf("modem %s: %w", modemName, err)
 	}
 	defer m.Close()
+	s.markModemUp(modemName)
 
 	if err := s.refreshSimLine(ctx, modemName, m); err != nil && ctx.Err() == nil {
 		s.deps.Log("sim lookup modem %s: %v", modemName, err)
@@ -94,8 +131,14 @@ func (s *Service) runModem(ctx context.Context, modemName string, entry config.M
 
 	del := s.slotDeleter(modemName, entry, m)
 
+	// A completed pass is what proves the modem is still able to deliver SMS,
+	// so it is recorded here rather than anywhere further down the pipeline.
 	partsHandler := func(ctx context.Context, parts []modem.Part) error {
-		return s.ingestParts(ctx, modemName, del, parts)
+		if err := s.ingestParts(ctx, modemName, del, parts); err != nil {
+			return err
+		}
+		s.markPollOK(modemName, s.now())
+		return nil
 	}
 
 	if catchUp {
@@ -107,7 +150,7 @@ func (s *Service) runModem(ctx context.Context, modemName string, entry config.M
 	switch entry.Driver {
 	case config.DriverMM:
 		return runMMWatch(ctx, m, func(ctx context.Context, msg modem.Message) error {
-			return s.ingestParts(ctx, modemName, del, []modem.Part{
+			return partsHandler(ctx, []modem.Part{
 				{
 					ID:        msg.ID,
 					From:      msg.From,
@@ -122,7 +165,7 @@ func (s *Service) runModem(ctx context.Context, modemName string, entry config.M
 	case config.DriverSerial:
 		return runSerialWatchParts(ctx, m, s.cfg.SerialPollInterval(), partsHandler)
 	default:
-		return fmt.Errorf("modem %s: unsupported driver %q", modemName, entry.Driver)
+		return permanent("modem %s: unsupported driver %q", modemName, entry.Driver)
 	}
 }
 
@@ -185,20 +228,39 @@ func (s *Service) simLineFor(modemName string) cmdutil.ResolvedLine {
 	return s.simLines[modemName]
 }
 
+// ingestParts processes one poll. A failure on a single segment is logged and
+// skipped rather than returned: an error here propagates out of the watch loop
+// and takes the whole modem down, so one message the pipeline cannot handle must
+// never be able to stop every later SMS from arriving. Only a cancelled context
+// ends the pass.
 func (s *Service) ingestParts(ctx context.Context, modemName string, del modem.SlotDeleter, parts []modem.Part) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if err := s.flushTimedOutConcat(ctx, modemName, del); err != nil {
-		return err
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		s.deps.Log("concat_flush_failed modem=%s error=%v", modemName, redactSecrets(err))
 	}
 
 	for _, part := range parts {
+		// Checked per segment so a shutdown is not held up by a long batch.
+		// Anything left unprocessed is still in modem storage and is picked up
+		// by the catch-up listing on the next start.
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if !modem.IsInbound(part.State) {
 			continue
 		}
 		if err := s.ingestPart(ctx, modemName, del, part); err != nil {
-			return err
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			s.deps.Log("ingest_failed modem=%s id=%s from=%s error=%v",
+				modemName, part.ID, part.From, redactSecrets(err))
+			continue
 		}
 	}
 	return nil
@@ -378,7 +440,12 @@ func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Messag
 		}
 		ch, ok := s.deps.Channels[chName]
 		if !ok {
-			return fmt.Errorf("channel %q not found", chName)
+			// A rule naming a channel that does not exist is a config mistake,
+			// not a reason to stop receiving: record it against the message and
+			// carry on with the channels that do exist.
+			_ = s.deps.Store.MarkDeliveryFailed(storageID, chName, "channel not configured")
+			s.deps.Log("channel_missing modem=%s id=%s channel=%s rule=%s", modemName, msg.ID, chName, ruleName)
+			continue
 		}
 		fwdCtx, cancel := context.WithTimeout(ctx, 45*time.Second)
 		err = ch.Forward(fwdCtx, inbound)

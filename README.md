@@ -190,6 +190,10 @@ Requires `modems`, `channels`, `forward_rules`, and `storage.path` in config (se
 | `watch.catch_up_on_start` | Forward existing inbound SMS on startup |
 | `watch.serial_poll_interval` | Poll interval for `serial` modems (default 10s) |
 | `watch.delete_after_forward` | Free the modem storage slot once every channel is delivered (default off) |
+| `watch.reconnect_initial` | First delay before reopening a failed modem (default 2s) |
+| `watch.reconnect_max` | Cap on the reconnect backoff; retried at this interval forever (default 60s) |
+| `watch.stall_timeout` | Report a connected modem that has not completed a poll in this long (default 5m) |
+| `watch.health_interval` | How often to log a `modem_health` heartbeat per modem (default 30m) |
 
 **Modem backends:**
 
@@ -387,6 +391,50 @@ To clear an existing backlog by hand:
 
 `prune` consults `storage.path` and only deletes slots the database shows as delivered
 on every channel; `--all` additionally deletes slots with no confirmed delivery.
+
+### A SIM goes silent while the daemon looks healthy
+
+Before the liveness work, any error inside a modem's watch loop — a USB re-enumeration,
+a read timeout, a modem that stopped answering AT — ended that modem's goroutine for
+good. The process stayed up serving the *other* modem, so `systemctl is-active` reported
+`active`, `Restart=on-failure` never fired, and that SIM received nothing until someone
+restarted the service by hand.
+
+The daemon now supervises each modem: a failed watch loop is closed and reopened with
+exponential backoff (`reconnect_initial` → `reconnect_max`), retried forever, and every
+reconnect re-lists modem storage so messages that arrived while the port was down are
+still picked up. One modem can no longer take another down with it.
+
+What that looks like in the journal:
+
+| Line | Meaning |
+|------|---------|
+| `modem_down modem=X uptime=… retry_in=…` | Watch loop exited; reconnect scheduled |
+| `modem_up modem=X (reconnected)` | Port reopened and watching again |
+| `modem_stalled modem=X last_poll=…` | Port is open but no poll has completed in `stall_timeout` |
+| `modem_recovered modem=X` | Polling resumed after a stall |
+| `modem_health modem=X state=up last_poll=… polls=N reconnects=N` | Heartbeat, every `health_interval` |
+| `modem_abandoned modem=X` | Not retryable (unsupported driver); fix the config |
+| `ingest_failed modem=X id=N` | One message could not be processed; the rest of the batch continued |
+| `channel_missing modem=X channel=Y` | A forward rule names a channel that is not configured |
+
+To confirm reception is alive right now:
+
+```bash
+journalctl -u sms-gateway-watch --since "-1h" | grep -E "modem_health|modem_down|modem_stalled"
+```
+
+A modem that is working logs `modem_health … state=up` with a small `last_poll` and a
+`polls` count that keeps climbing. `reconnects` counts how often it has had to recover —
+a number that grows steadily points at the hardware or the USB cable, not the daemon.
+
+Two deliberate choices sit behind this:
+
+- The unit uses `Wants=sms-tunnel.service`, **not** `Requires=`. The tunnel is only how
+  messages leave the Pi; binding reception to it meant every tunnel restart also stopped
+  the gateway.
+- `Restart=always` with `StartLimitIntervalSec=0`. A clean exit still means no SMS are
+  arriving, and the default start limit gives up after 5 restarts in 10s.
 
 ## Project layout
 

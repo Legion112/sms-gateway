@@ -16,6 +16,10 @@ type WatchConfig struct {
 	DeleteAfterForward    bool          `yaml:"delete_after_forward"`
 	SerialPollInterval    time.Duration `yaml:"-"`
 	ConcatAssemblyTimeout time.Duration `yaml:"-"`
+	ReconnectInitial      time.Duration `yaml:"-"`
+	ReconnectMax          time.Duration `yaml:"-"`
+	StallTimeout          time.Duration `yaml:"-"`
+	HealthInterval        time.Duration `yaml:"-"`
 }
 
 type watchFile struct {
@@ -27,6 +31,10 @@ type watchFile struct {
 		DeleteAfterForward    bool   `yaml:"delete_after_forward"`
 		SerialPollInterval    string `yaml:"serial_poll_interval"`
 		ConcatAssemblyTimeout string `yaml:"concat_assembly_timeout"`
+		ReconnectInitial      string `yaml:"reconnect_initial"`
+		ReconnectMax          string `yaml:"reconnect_max"`
+		StallTimeout          string `yaml:"stall_timeout"`
+		HealthInterval        string `yaml:"health_interval"`
 	} `yaml:"watch"`
 }
 
@@ -36,19 +44,29 @@ func applyWatchFile(file *watchFile, cfg *Config) error {
 	}
 	cfg.Watch.CatchUpOnStart = file.Watch.CatchUpOnStart
 	cfg.Watch.DeleteAfterForward = file.Watch.DeleteAfterForward
-	if file.Watch.SerialPollInterval != "" {
-		d, err := time.ParseDuration(file.Watch.SerialPollInterval)
-		if err != nil {
-			return fmt.Errorf("watch.serial_poll_interval: %w", err)
+	for _, d := range []struct {
+		key   string
+		raw   string
+		field *time.Duration
+	}{
+		{"serial_poll_interval", file.Watch.SerialPollInterval, &cfg.Watch.SerialPollInterval},
+		{"concat_assembly_timeout", file.Watch.ConcatAssemblyTimeout, &cfg.Watch.ConcatAssemblyTimeout},
+		{"reconnect_initial", file.Watch.ReconnectInitial, &cfg.Watch.ReconnectInitial},
+		{"reconnect_max", file.Watch.ReconnectMax, &cfg.Watch.ReconnectMax},
+		{"stall_timeout", file.Watch.StallTimeout, &cfg.Watch.StallTimeout},
+		{"health_interval", file.Watch.HealthInterval, &cfg.Watch.HealthInterval},
+	} {
+		if d.raw == "" {
+			continue
 		}
-		cfg.Watch.SerialPollInterval = d
-	}
-	if file.Watch.ConcatAssemblyTimeout != "" {
-		d, err := time.ParseDuration(file.Watch.ConcatAssemblyTimeout)
+		parsed, err := time.ParseDuration(d.raw)
 		if err != nil {
-			return fmt.Errorf("watch.concat_assembly_timeout: %w", err)
+			return fmt.Errorf("watch.%s: %w", d.key, err)
 		}
-		cfg.Watch.ConcatAssemblyTimeout = d
+		if parsed < 0 {
+			return fmt.Errorf("watch.%s: must not be negative", d.key)
+		}
+		*d.field = parsed
 	}
 	return nil
 }
@@ -100,4 +118,42 @@ func (cfg Config) ConcatAssemblyTimeout() time.Duration {
 		return cfg.Watch.ConcatAssemblyTimeout
 	}
 	return 60 * time.Second
+}
+
+// ReconnectInitial returns the first delay before reopening a modem whose watch
+// loop exited, with default 2s.
+func (cfg Config) ReconnectInitial() time.Duration {
+	if cfg.Watch.ReconnectInitial > 0 {
+		return cfg.Watch.ReconnectInitial
+	}
+	return 2 * time.Second
+}
+
+// ReconnectMax caps the exponential reconnect backoff, with default 60s. A modem
+// that stays unreachable is still retried at this interval forever: the daemon
+// never gives up on a SIM.
+func (cfg Config) ReconnectMax() time.Duration {
+	initial := cfg.ReconnectInitial()
+	if cfg.Watch.ReconnectMax > 0 {
+		return max(cfg.Watch.ReconnectMax, initial)
+	}
+	return max(60*time.Second, initial)
+}
+
+// StallTimeout is how long a connected modem may go without a successful poll
+// before it is reported stalled, with default 5m when unset.
+func (cfg Config) StallTimeout() time.Duration {
+	if cfg.Watch.StallTimeout > 0 {
+		return cfg.Watch.StallTimeout
+	}
+	return 5 * time.Minute
+}
+
+// HealthInterval is how often a heartbeat line is logged for every modem, so the
+// journal carries positive proof that reception is alive. Default 30m when unset.
+func (cfg Config) HealthInterval() time.Duration {
+	if cfg.Watch.HealthInterval > 0 {
+		return cfg.Watch.HealthInterval
+	}
+	return 30 * time.Minute
 }
