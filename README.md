@@ -541,4 +541,4 @@ only machine that actually matters, the Pi.
 
 ## License
 
-Private project — license TBD.
+MIT — see [LICENSE](LICENSE).
