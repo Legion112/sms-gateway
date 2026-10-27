@@ -190,3 +190,30 @@ func TestIsFullyDelivered(t *testing.T) {
 		t.Fatalf("unknown id: done=%v err=%v want false", done, err)
 	}
 }
+
+func TestHasPendingDelivery(t *testing.T) {
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	// No delivery rows: nothing was ever routed, so nothing is pending.
+	if got, err := store.HasPendingDelivery("m1:12"); err != nil || got {
+		t.Fatalf("no rows: got=%v err=%v want false", got, err)
+	}
+
+	if err := store.MarkDeliveryFailed("m1:12", "tg", "telegram unreachable"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.HasPendingDelivery("m1:12"); err != nil || !got {
+		t.Fatalf("failed attempt: got=%v err=%v want true", got, err)
+	}
+
+	if err := store.MarkDelivered("m1:12", "tg"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.HasPendingDelivery("m1:12"); err != nil || got {
+		t.Fatalf("delivered: got=%v err=%v want false", got, err)
+	}
+}

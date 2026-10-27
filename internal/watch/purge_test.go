@@ -188,3 +188,114 @@ func TestSlotDeleterDisabledByConfig(t *testing.T) {
 		t.Fatal("slotDeleter must be set while delete_after_forward is on")
 	}
 }
+
+// flakyChannel fails until fail is cleared, counting successful forwards.
+type flakyChannel struct {
+	fail     bool
+	forwards int
+}
+
+func (f *flakyChannel) Name() string                           { return "flaky" }
+func (f *flakyChannel) Driver() string                         { return "flaky" }
+func (f *flakyChannel) Ping(context.Context) error             { return nil }
+func (f *flakyChannel) SendTest(context.Context, string) error { return nil }
+func (f *flakyChannel) Close() error                           { return nil }
+func (f *flakyChannel) Forward(context.Context, forward.InboundSMS) error {
+	if f.fail {
+		return fmt.Errorf("telegram unreachable")
+	}
+	f.forwards++
+	return nil
+}
+
+func concatSegments(ts string) []modem.Part {
+	return []modem.Part{
+		{ID: "182", From: "hambi", State: "received (read)", Timestamp: ts, Text: "first half ", ConcatRef: 53, Part: 1, PartTotal: 2},
+		{ID: "184", From: "hambi", State: "received (read)", Timestamp: ts, Text: "second half", ConcatRef: 53, Part: 2, PartTotal: 2},
+	}
+}
+
+// Regression: a merged concat message whose forward failed used to be skipped
+// on every later poll, so it was never retried and held its slots forever.
+func TestMergedConcatRetriesFailedDelivery(t *testing.T) {
+	ch := &flakyChannel{fail: true}
+	svc, _ := newPurgeService(t, ch)
+	del := &fakeDeleter{}
+	ts := "26/09/30,16:33:21+00"
+
+	if err := svc.ingestParts(context.Background(), "m1", del, concatSegments(ts)); err != nil {
+		t.Fatal(err)
+	}
+	if ch.forwards != 0 {
+		t.Fatalf("forwards=%d want 0 while the channel is down", ch.forwards)
+	}
+	if len(del.deleted) != 0 {
+		t.Fatalf("deleted=%v want none: an undelivered message must keep its slots", del.deleted)
+	}
+
+	// Channel recovers: the next poll re-lists the same segments.
+	ch.fail = false
+	if err := svc.ingestParts(context.Background(), "m1", del, concatSegments(ts)); err != nil {
+		t.Fatal(err)
+	}
+	if ch.forwards != 1 {
+		t.Fatalf("forwards=%d want exactly 1 retry", ch.forwards)
+	}
+	if len(del.deleted) != 2 {
+		t.Fatalf("deleted=%v want both slots freed once delivered", del.deleted)
+	}
+}
+
+func TestMergedConcatDeliveredIsNotForwardedTwice(t *testing.T) {
+	ch := &flakyChannel{}
+	svc, _ := newPurgeService(t, ch)
+	ts := "26/09/30,16:33:21+00"
+
+	if err := svc.ingestParts(context.Background(), "m1", nil, concatSegments(ts)); err != nil {
+		t.Fatal(err)
+	}
+	if ch.forwards != 1 {
+		t.Fatalf("forwards=%d want 1", ch.forwards)
+	}
+	// Re-listed before anything purged the slots.
+	if err := svc.ingestParts(context.Background(), "m1", nil, concatSegments(ts)); err != nil {
+		t.Fatal(err)
+	}
+	if ch.forwards != 1 {
+		t.Fatalf("forwards=%d want still 1: a delivered message must not be re-sent", ch.forwards)
+	}
+}
+
+// A merged message that matched no rule has no pending delivery to retry, so it
+// must not be re-ingested on every poll.
+func TestMergedConcatWithoutRuleIsNotRetried(t *testing.T) {
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	ch := &flakyChannel{}
+	cfg := config.Config{Modems: map[string]config.ModemEntry{"m1": {Driver: config.DriverSerial}}}
+	cfg.Watch.DeleteAfterForward = true
+	svc := NewService(cfg, Dependencies{
+		Store:    store,
+		Router:   forward.NewRouter([]config.ForwardRule{{Name: "other", From: "+100", To: []string{"tg"}}}),
+		Channels: map[string]forward.Channel{"tg": ch},
+		Log:      func(string, ...any) {},
+	})
+
+	del := &fakeDeleter{}
+	ts := "26/09/30,16:33:21+00"
+	for i := 0; i < 3; i++ {
+		if err := svc.ingestParts(context.Background(), "m1", del, concatSegments(ts)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if ch.forwards != 0 {
+		t.Fatalf("forwards=%d want 0: no rule matches", ch.forwards)
+	}
+	if len(del.deleted) != 0 {
+		t.Fatalf("deleted=%v want none: an unrouted message must keep its slots", del.deleted)
+	}
+}

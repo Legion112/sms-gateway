@@ -223,7 +223,7 @@ func (s *Service) ingestPart(ctx context.Context, modemName string, del modem.Sl
 		return err
 	}
 	if merged {
-		return s.purgeForwarded(ctx, modemName, part.ID, mergedID, del, []string{part.ID})
+		return s.retryOrPurgeMerged(ctx, modemName, mergedID, del, part)
 	}
 
 	complete, storedParts, err := s.deps.Store.UpsertConcatPart(storage.ConcatPart{
@@ -424,7 +424,37 @@ func (s *Service) purgeMergedSegment(ctx context.Context, modemName string, del 
 	if !merged {
 		return nil
 	}
-	return s.purgeForwarded(ctx, modemName, part.ID, mergedID, del, []string{part.ID})
+	return s.retryOrPurgeMerged(ctx, modemName, mergedID, del, part)
+}
+
+// retryOrPurgeMerged handles a segment whose concat group is already merged.
+// Both paths into it return early from the normal ingest flow, so a merged
+// message whose forward failed would otherwise never be retried and its
+// segments would hold modem slots forever. A message that was never routed to
+// any channel has nothing pending and is left alone.
+func (s *Service) retryOrPurgeMerged(ctx context.Context, modemName, mergedID string, del modem.SlotDeleter, part modem.Part) error {
+	pending, err := s.deps.Store.HasPendingDelivery(mergedID)
+	if err != nil {
+		return err
+	}
+	if !pending {
+		return s.purgeForwarded(ctx, modemName, part.ID, mergedID, del, []string{part.ID})
+	}
+	stored, ok, err := s.deps.Store.GetMessage(mergedID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	s.deps.Log("retry modem=%s id=%s from=%s (merged delivery still pending)", modemName, part.ID, stored.FromNumber)
+	return s.ingest(ctx, modemName, modem.Message{
+		ID:        part.ID,
+		From:      stored.FromNumber,
+		Text:      stored.Body,
+		Timestamp: stored.ReceivedAt,
+		State:     part.State,
+	}, mergedID, del, []string{part.ID})
 }
 
 // purgeForwarded frees the modem storage slots backing a message, but only once

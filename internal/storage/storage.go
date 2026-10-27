@@ -272,3 +272,19 @@ func (s *Store) IsFullyDelivered(messageID string) (bool, error) {
 	}
 	return total > 0 && total == sent, nil
 }
+
+// HasPendingDelivery reports whether messageID has a delivery row that has not
+// yet succeeded. A message with no rows at all has nothing pending: it was never
+// routed to a channel, so there is no attempt to retry.
+func (s *Store) HasPendingDelivery(messageID string) (bool, error) {
+	var pending int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM deliveries
+		 WHERE message_id = ? AND (sent_at IS NULL OR sent_at = '')`,
+		messageID,
+	).Scan(&pending)
+	if err != nil {
+		return false, err
+	}
+	return pending > 0, nil
+}
