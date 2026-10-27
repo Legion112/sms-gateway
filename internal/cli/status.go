@@ -5,6 +5,7 @@ import (
 
 	"github.com/legion/sms-gateway/internal/cmdutil"
 	"github.com/legion/sms-gateway/internal/config"
+	"github.com/legion/sms-gateway/internal/modem"
 	"github.com/spf13/cobra"
 )
 
@@ -74,6 +75,7 @@ func statusOne(base config.Config, target cmdutil.ModemHandle) error {
 	}
 	fmt.Printf("modem: %s\n", status.ModemState)
 	fmt.Printf("network: %s\n", status.NetworkState)
+	printRadioPosture(target)
 	fmt.Printf("messages: %s\n", status.MessageStore)
 	if status.MessageCount >= 0 {
 		fmt.Printf("message_count: %d\n", status.MessageCount)
@@ -81,4 +83,31 @@ func statusOne(base config.Config, target cmdutil.ModemHandle) error {
 	fmt.Printf("sms_ready: %t\n", status.SMSReady)
 	fmt.Printf("detail: %s\n", status.Detail)
 	return nil
+}
+
+// printRadioPosture reports how the modem picks its technology and operator,
+// and flags the two settings that let a modem look perfectly healthy while
+// being unable to receive anything. It only reads: correcting the posture is
+// the watch daemon's job, and a status command must not rewrite modem NV.
+func printRadioPosture(target cmdutil.ModemHandle) {
+	controller, ok := target.Modem.(modem.RadioController)
+	if !ok {
+		return
+	}
+	ctx, cancel := cmdutil.SMSContext(target.Config)
+	defer cancel()
+
+	posture, err := controller.ReadRadioPosture(ctx)
+	if err != nil {
+		fmt.Printf("radio: unreadable (%v)\n", err)
+		return
+	}
+	fmt.Printf("scan_mode: %s\n", posture.ScanMode)
+	fmt.Printf("operator_selection: %s\n", posture.Operator)
+	if posture.ScanMode == config.ScanModeLTE {
+		fmt.Printf("warning: locked to LTE; a roaming SIM then needs the visited network to carry SMS over SGs/CSFB\n")
+	}
+	if posture.Operator == modem.OperatorManual {
+		fmt.Printf("warning: operator pinned manually; the modem will not reselect when this network degrades\n")
+	}
 }

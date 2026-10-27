@@ -39,9 +39,20 @@ type SerialModem struct {
 	deleted  []int
 	commands []string
 	closed   bool
+
+	// scanMode is AT+QCFG="nwscanmode": 0 automatic, 1 GSM, 2 WCDMA, 3 LTE.
+	// copsMode is AT+COPS <mode>: 0 automatic, 1 manual. Both survive a Replug,
+	// as a real modem's NV does across a USB re-enumeration.
+	scanMode int
+	copsMode int
 }
 
-var cmgdRe = regexp.MustCompile(`^AT\+CMGD=(\d+)`)
+var (
+	cmgdRe     = regexp.MustCompile(`^AT\+CMGD=(\d+)`)
+	scanReadRe = regexp.MustCompile(`^AT\+QCFG="nwscanmode"$`)
+	scanSetRe  = regexp.MustCompile(`^AT\+QCFG="nwscanmode",(\d+)(?:,(\d+))?$`)
+	copsSetRe  = regexp.MustCompile(`^AT\+COPS=(\d+)`)
+)
 
 // NewSerialModem creates the pty and the device node, and starts answering AT.
 func NewSerialModem(link string) (*SerialModem, error) {
@@ -164,6 +175,22 @@ func (m *SerialModem) Stored() int {
 	return len(m.messages)
 }
 
+// SetRadio puts the modem in a given posture, standing in for a module that
+// was left locked by a previous owner, a firmware default or an AT session.
+func (m *SerialModem) SetRadio(scanMode, copsMode int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.scanMode = scanMode
+	m.copsMode = copsMode
+}
+
+// Radio reports the posture the modem currently holds.
+func (m *SerialModem) Radio() (scanMode, copsMode int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.scanMode, m.copsMode
+}
+
 // Commands returns every AT command the modem has been sent.
 func (m *SerialModem) Commands() []string {
 	m.mu.Lock()
@@ -232,6 +259,17 @@ func (m *SerialModem) respond(cmd string) string {
 		return ok(m.cpmsCounts())
 	case cmd == "AT+CPMS?":
 		return ok(m.cpmsReport())
+	case scanSetRe.MatchString(cmd):
+		return m.setScanMode(cmd)
+	case scanReadRe.MatchString(cmd):
+		m.mu.Lock()
+		mode := m.scanMode
+		m.mu.Unlock()
+		return ok(fmt.Sprintf(`+QCFG: "nwscanmode",%d`, mode))
+	case cmd == "AT+COPS?":
+		return ok(m.copsReport())
+	case copsSetRe.MatchString(cmd):
+		return m.setCOPSMode(cmd)
 	case cmd == "AT+CPIN?":
 		return ok("+CPIN: READY")
 	case cmd == "AT+CSQ":
@@ -255,6 +293,46 @@ func (m *SerialModem) respond(cmd string) string {
 	default:
 		return "\r\nERROR\r\n"
 	}
+}
+
+// setScanMode answers AT+QCFG="nwscanmode",<mode>[,<effect>]. A real EC25
+// rejects a mode outside 0-3, and so does this.
+func (m *SerialModem) setScanMode(cmd string) string {
+	fields := scanSetRe.FindStringSubmatch(cmd)
+	mode, err := strconv.Atoi(fields[1])
+	if err != nil || mode < 0 || mode > 3 {
+		return "\r\nERROR\r\n"
+	}
+	m.mu.Lock()
+	m.scanMode = mode
+	m.mu.Unlock()
+	return "\r\n\r\nOK\r\n"
+}
+
+// setCOPSMode answers AT+COPS=<mode>[,...]. Only automatic selection is
+// modelled; a manual lock needs an operator this fake does not have.
+func (m *SerialModem) setCOPSMode(cmd string) string {
+	mode, err := strconv.Atoi(copsSetRe.FindStringSubmatch(cmd)[1])
+	if err != nil || mode != 0 {
+		return "\r\nERROR\r\n"
+	}
+	m.mu.Lock()
+	m.copsMode = 0
+	m.mu.Unlock()
+	return "\r\n\r\nOK\r\n"
+}
+
+// copsReport mirrors the real modem: automatic selection names the operator it
+// settled on, a manual lock that has not registered reports the mode alone,
+// which is exactly what the live backup modem returned.
+func (m *SerialModem) copsReport() string {
+	m.mu.Lock()
+	mode := m.copsMode
+	m.mu.Unlock()
+	if mode == 0 {
+		return `+COPS: 0,0,"beeline Beeline UZ",7`
+	}
+	return fmt.Sprintf("+COPS: %d", mode)
 }
 
 func (m *SerialModem) cpmsCounts() string {

@@ -129,6 +129,10 @@ func (s *Service) runModem(ctx context.Context, modemName string, entry config.M
 	defer m.Close()
 	s.markModemUp(modemName)
 
+	// Before the SIM lookup, because correcting the posture can drop and
+	// reacquire registration, which is what that lookup reads.
+	s.applyRadioPosture(ctx, modemName, m)
+
 	if err := s.refreshSimLine(ctx, modemName, m); err != nil && ctx.Err() == nil {
 		s.deps.Log("sim lookup modem %s: %v", modemName, err)
 	}

@@ -25,6 +25,11 @@ type Driver struct {
 	timeout time.Duration
 	verbose bool
 	log     func(format string, args ...any)
+	// radio is the posture ApplyRadioPosture holds this modem in. Reading and
+	// correcting it is deliberately not part of setup: a connect that watches
+	// for SMS should assert it, while a read-only CLI command should not
+	// rewrite the modem's NV behind the operator's back.
+	radio config.RadioConfig
 }
 
 // New opens the serial AT connection (with auto port probing when configured).
@@ -52,7 +57,7 @@ func New(cfg config.SerialConfig, verbose bool) (modem.Modem, error) {
 		Log:      logFn,
 	}
 
-	d := &Driver{timeout: cfg.Timeout, verbose: verbose, log: logFn}
+	d := &Driver{timeout: cfg.Timeout, verbose: verbose, log: logFn, radio: cfg.Radio}
 	port, device, err := openAuto(clientCfg)
 	if err != nil {
 		return nil, err

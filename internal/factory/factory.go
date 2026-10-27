@@ -24,6 +24,9 @@ func NewFromModemEntry(entry config.ModemEntry, verbose bool) (modem.Modem, erro
 	case config.DriverMM:
 		return mm.New(entry.MM, verbose)
 	case config.DriverSerial:
+		// radio is configured per modem, not per transport; hand it to the
+		// driver that speaks AT.
+		entry.Serial.Radio = entry.Radio
 		return serial.New(entry.Serial, verbose)
 	default:
 		return nil, fmt.Errorf("unknown driver %q", entry.Driver)

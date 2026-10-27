@@ -101,8 +101,25 @@ type lab struct {
 	store *storage.Store
 }
 
+// labOptions tunes a lab beyond what startLab sets up by default.
+type labOptions struct {
+	purge bool
+	// radio is the posture the daemon is configured to hold the modem in.
+	// The zero value is the production default: automatic for both settings.
+	radio config.RadioConfig
+	// before runs against the fake modem once it exists and before the daemon
+	// opens it, which is the only window in which a starting posture can be
+	// set without racing the correction under test.
+	before func(*harness.SerialModem)
+}
+
 // startLab brings up the fake modem and the real watch service against it.
 func startLab(t *testing.T, purge bool) *lab {
+	t.Helper()
+	return startLabWith(t, labOptions{purge: purge})
+}
+
+func startLabWith(t *testing.T, opts labOptions) *lab {
 	t.Helper()
 	requirePTY(t)
 
@@ -112,6 +129,9 @@ func startLab(t *testing.T, purge bool) *lab {
 		t.Fatalf("fake modem: %v", err)
 	}
 	t.Cleanup(sim.Close)
+	if opts.before != nil {
+		opts.before(sim)
+	}
 
 	store, err := storage.Open(":memory:")
 	if err != nil {
@@ -124,13 +144,14 @@ func startLab(t *testing.T, purge bool) *lab {
 			"lab": {
 				Driver: config.DriverSerial,
 				Serial: config.SerialConfig{Device: link, BaudRate: 115200, Timeout: 2 * time.Second},
+				Radio:  opts.radio,
 			},
 		},
 	}
 	cfg.Watch.SerialPollInterval = 150 * time.Millisecond
 	cfg.Watch.ReconnectInitial = 100 * time.Millisecond
 	cfg.Watch.ReconnectMax = 300 * time.Millisecond
-	cfg.Watch.DeleteAfterForward = purge
+	cfg.Watch.DeleteAfterForward = opts.purge
 
 	ch := &captureChannel{}
 	lg := &labLog{}

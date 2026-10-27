@@ -12,6 +12,9 @@ type ModemEntry struct {
 	Driver string       `yaml:"driver"`
 	Serial SerialConfig `yaml:"serial"`
 	MM     MMConfig     `yaml:"mm"`
+	// Radio is the RAT and operator-selection posture to hold this modem in.
+	// The zero value means automatic for both; see RadioConfig.
+	Radio RadioConfig `yaml:"radio"`
 	// Removed fields rejected at validate: phone_number, phone_ussd, expected_iccid
 	PhoneNumber   string `yaml:"phone_number,omitempty"`
 	PhoneUSSD     string `yaml:"phone_ussd,omitempty"`
@@ -104,6 +107,9 @@ func validateForwarding(cfg Config) error {
 			return fmt.Errorf("modems.%s: unknown driver %q", name, m.Driver)
 		}
 		if err := validateModemEntryLegacyFields(name, m); err != nil {
+			return err
+		}
+		if err := validateRadio(fmt.Sprintf("modems.%s", name), m.Radio); err != nil {
 			return err
 		}
 		if m.ExpectedICCID != "" {

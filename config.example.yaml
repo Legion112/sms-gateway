@@ -33,6 +33,21 @@ modems:
     mm:
       modem_index: 1
       timeout: 5s
+    # Radio posture, asserted by the watch daemon each time it opens the modem
+    # (serial driver only; ModemManager owns this for mm modems). Both settings
+    # default to auto, which is what you want: a modem locked to LTE receives
+    # SMS only where the visited network carries it over SGs/CSFB or IMS, and a
+    # manually pinned operator will not reselect when that network degrades.
+    # Either one lets a modem register, poll clean and report healthy while no
+    # message can reach it.
+    #
+    #   scan_mode: auto | gsm | wcdma | lte | keep     (default auto)
+    #   operator:  auto | keep                         (default auto)
+    #
+    # Use keep for a modem that is locked deliberately:
+    # radio:
+    #   scan_mode: keep
+    #   operator: keep
 
 channels:
   my-telegram:

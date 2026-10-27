@@ -42,6 +42,10 @@ type SerialConfig struct {
 	Device   string        `yaml:"device"`
 	BaudRate int           `yaml:"baud_rate"`
 	Timeout  time.Duration `yaml:"timeout"`
+	// Radio is copied in from the owning ModemEntry by the driver factory
+	// rather than parsed here, so the posture is configured once per modem
+	// instead of once per transport.
+	Radio RadioConfig `yaml:"-"`
 }
 
 // MMConfig holds ModemManager driver settings.

@@ -196,6 +196,8 @@ Requires `modems`, `channels`, `forward_rules`, and `storage.path` in config (se
 | `watch.health_interval` | How often to log a `modem_health` heartbeat per modem (default 30m) |
 | `alerts.after` | Report a modem silent this long (default 5m) |
 | `alerts.channels` | Channels operational alerts go to; empty switches alerting off |
+| `modems.<name>.radio.scan_mode` | Technology the modem may use: `auto` (default), `gsm`, `wcdma`, `lte`, or `keep` to leave it as found |
+| `modems.<name>.radio.operator` | `auto` (default) lets the modem reselect its network; `keep` leaves a manual lock in place |
 
 **Modem backends:**
 
@@ -460,6 +462,9 @@ What that looks like in the journal:
 | `modem_recovered modem=X` | Polling resumed after a stall |
 | `modem_health modem=X state=up last_poll=… polls=N reconnects=N` | Heartbeat, every `health_interval` |
 | `modem_abandoned modem=X` | Not retryable (unsupported driver); fix the config |
+| `modem_radio modem=X scan_mode=… operator=…` | Radio posture at connect; already correct, nothing written |
+| `modem_radio_corrected modem=X changed=…` | Modem was found in the wrong posture and put back |
+| `radio_posture_failed modem=X` | Posture could not be read or set; the modem keeps running as it is |
 | `ingest_failed modem=X id=N` | One message could not be processed; the rest of the batch continued |
 | `channel_missing modem=X channel=Y` | A forward rule names a channel that is not configured |
 
@@ -480,6 +485,50 @@ Two deliberate choices sit behind this:
   the gateway.
 - `Restart=always` with `StartLimitIntervalSec=0`. A clean exit still means no SMS are
   arriving, and the default start limit gives up after 5 restarts in 10s.
+
+### A modem registers but never receives SMS
+
+The failure above is a modem that stops polling. This one is worse, because nothing
+stops: the modem registers, answers every AT command, completes every poll and logs
+`modem_health … state=up` forever, while no SMS can reach it at all.
+
+Two settings cause it, and both survive a reboot because they live in the module's NV:
+
+- **Locked to LTE** (`AT+QCFG="nwscanmode",3`). An LTE-only device receives SMS over
+  the SGs interface or over IMS. While roaming, that path exists only if the *visited*
+  network offers SGs/CSFB to roamers or IMS registration succeeds there. Where neither
+  holds, data works and SMS silently does not.
+- **Operator pinned manually** (`AT+COPS=1,…`). The modem will not reselect, however
+  badly the network it is pinned to is serving it.
+
+Both were found on this project's own backup modem, which is why the daemon now asserts
+a radio posture every time it opens a modem: it reads `nwscanmode` and `COPS`, writes
+only what is wrong, reads back to confirm, and logs the change. A modem already correct
+is read and left alone, so `modem_radio_corrected` in the journal always means something
+really had drifted.
+
+Check the current posture without changing anything:
+
+```bash
+./bin/sms-gateway status --modem ec25-backup
+```
+
+`scan_mode` and `operator_selection` are reported there, with a warning line against
+either risky setting.
+
+To keep a modem that is locked on purpose, opt it out per modem:
+
+```yaml
+modems:
+  ec25-backup:
+    radio:
+      scan_mode: keep
+      operator: keep
+```
+
+Correcting the posture is the watch daemon's job alone. `status` only reads: a command
+that reports on a modem must not rewrite its NV. The `mm` driver implements none of
+this, because ModemManager owns that decision for its modems.
 
 ## Project layout
 
