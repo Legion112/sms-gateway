@@ -236,6 +236,13 @@ If a port is **busy**, stop the watch daemon first (`pkill sms-gateway-watch`). 
 
 ### Telegram via SSH tunnel (Russia / blocked regions)
 
+> Not needed when the network's gateway already routes blocked destinations
+> abroad, e.g. a split tunnel on the router. Check first: if `curl
+> https://api.telegram.org/` answers from the device, `proxy_url` only adds a
+> hop. It is worth confirming the tunnel is a genuinely independent path and not
+> one whose own packets ride over that same gateway — if it is not, it adds a
+> failure mode without adding a fallback.
+
 When `api.telegram.org` is unreachable, route Bot API traffic through a SOCKS proxy created by SSH to an outside VPS.
 
 1. Create tunnel user on VPN and deploy key (see [`deploy/systemd/sms-tunnel.service`](deploy/systemd/sms-tunnel.service)).
