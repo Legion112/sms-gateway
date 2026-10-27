@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sms-gateway</title>
+<meta name="description" content="A small Go daemon that receives SMS on Quectel EC25-EUX LTE modems and forwards them to Telegram. Runs on a Raspberry Pi.">
+<meta property="og:title" content="sms-gateway">
+<meta property="og:description" content="Receive SMS on an EC25-EUX LTE modem and forward them to Telegram. Two modems, concatenated messages reassembled, routed by which SIM they arrived on.">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23141b22'/%3E%3Cpath d='M7 20.5h3.2v2.2H7zM13 15h3.2v7.7H13zM19 10.5h3.2v12.2H19z' fill='%23f0a830'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: an equipment datasheet. One measured column, left-aligned, dense
+   spec blocks and real instrument output rather than marketing furniture. */
+:root{
+  --bg:#f3f6f8; --surface:#ffffff; --sunk:#eaeff3;
+  --fg:#101820; --muted:#596875; --line:#d9e1e8;
+  --accent:#b45309; --accent-soft:#fdf3e4; --ok:#0f766e; --ok-soft:#e5f3f1;
+  --font-display:"IBM Plex Sans Condensed","Helvetica Neue",Arial,sans-serif;
+  --font-body:"IBM Plex Sans","Helvetica Neue",Arial,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#0c1217; --surface:#141c23; --sunk:#101820;
+    --fg:#e3ebf2; --muted:#8c9aa7; --line:#243039;
+    --accent:#f0a830; --accent-soft:#2a1f10; --ok:#2dd4bf; --ok-soft:#11261f;
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#0c1217; --surface:#141c23; --sunk:#101820;
+  --fg:#e3ebf2; --muted:#8c9aa7; --line:#243039;
+  --accent:#f0a830; --accent-soft:#2a1f10; --ok:#2dd4bf; --ok-soft:#11261f;
+  color-scheme:dark;
+}
+
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--bg); color:var(--fg);
+  font-family:var(--font-body); font-size:16px; line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:60rem; margin-inline:auto; padding-left:max(20px,env(safe-area-inset-left,0px)); padding-right:max(20px,env(safe-area-inset-right,0px))}
+
+h1,h2,h3{font-family:var(--font-display); text-wrap:balance; margin:0; line-height:1.15}
+h2{font-size:1.6rem; font-weight:700; letter-spacing:-.01em}
+h3{font-size:1.05rem; font-weight:600}
+p{margin:0; max-width:65ch}
+a{color:var(--accent); text-underline-offset:3px}
+a:focus-visible,button:focus-visible{outline:2px solid var(--accent); outline-offset:3px; border-radius:2px}
+code{font-family:var(--font-mono); font-size:.88em}
+
+.eyebrow{
+  font-family:var(--font-mono); font-size:.72rem; font-weight:500;
+  letter-spacing:.14em; text-transform:uppercase; color:var(--muted);
+}
+
+/* ---- masthead ---- */
+.masthead{border-bottom:1px solid var(--line); background:var(--surface)}
+.masthead .wrap{display:flex; flex-wrap:wrap; gap:10px 24px; align-items:baseline; padding-block:16px}
+.wordmark{font-family:var(--font-mono); font-size:1rem; font-weight:500; letter-spacing:-.01em}
+.wordmark b{color:var(--accent); font-weight:500}
+.masthead nav{margin-left:auto; display:flex; flex-wrap:wrap; gap:6px 18px; font-size:.9rem}
+.masthead nav a{color:var(--muted); text-decoration:none}
+.masthead nav a:hover{color:var(--fg)}
+
+/* ---- hero ---- */
+.hero .wrap{padding-block:52px 40px; display:grid; gap:28px}
+.hero h1{font-size:clamp(2.3rem,7vw,3.6rem); font-weight:700; letter-spacing:-.025em}
+.lede{font-size:clamp(1.05rem,2.4vw,1.2rem); color:var(--muted); max-width:46ch}
+.lede strong{color:var(--fg); font-weight:500}
+.specline{
+  font-family:var(--font-mono); font-size:.8rem; color:var(--muted);
+  display:flex; flex-wrap:wrap; gap:6px 14px;
+}
+.specline span::after{content:" ·"; color:var(--line)}
+.specline span:last-child::after{content:""}
+.cta{display:flex; flex-wrap:wrap; gap:12px}
+.btn{
+  display:inline-block; padding:10px 18px; border-radius:3px;
+  font-weight:500; font-size:.95rem; text-decoration:none; border:1px solid var(--line);
+}
+.btn-primary{background:var(--fg); color:var(--bg); border-color:var(--fg)}
+.btn-primary:hover{opacity:.88}
+.btn-ghost{color:var(--fg); background:var(--surface)}
+.btn-ghost:hover{border-color:var(--muted)}
+
+/* ---- instrument panel ---- */
+.panel{border:1px solid var(--line); border-radius:4px; background:var(--surface); overflow:hidden}
+.panel-head{
+  display:flex; flex-wrap:wrap; gap:4px 12px; align-items:center; justify-content:space-between;
+  padding:9px 14px; border-bottom:1px solid var(--line); background:var(--sunk);
+}
+.panel-body{display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,230px),1fr))}
+.unit{padding:16px; display:grid; gap:10px; border-right:1px solid var(--line)}
+.unit:last-child{border-right:0}
+.unit-id{display:flex; align-items:center; gap:8px; font-family:var(--font-mono); font-size:.9rem}
+.lamp{width:8px; height:8px; border-radius:50%; background:var(--ok); box-shadow:0 0 0 3px var(--ok-soft); flex:none}
+.readouts{display:grid; grid-template-columns:auto 1fr; gap:3px 14px; font-size:.84rem}
+.readouts dt{color:var(--muted)}
+.readouts dd{margin:0; font-family:var(--font-mono); font-variant-numeric:tabular-nums}
+.pill{
+  font-family:var(--font-mono); font-size:.68rem; letter-spacing:.08em; text-transform:uppercase;
+  padding:2px 7px; border-radius:2px; background:var(--ok-soft); color:var(--ok); white-space:nowrap;
+}
+
+/* ---- sections ---- */
+section{border-top:1px solid var(--line)}
+section .wrap{padding-block:48px}
+.sec-head{display:grid; gap:10px; margin-bottom:26px}
+
+.chain{display:grid; gap:0; counter-reset:step; margin-top:4px}
+.step{
+  display:grid; grid-template-columns:auto 1fr; gap:4px 16px;
+  padding:14px 0; border-bottom:1px solid var(--line);
+}
+.step:last-child{border-bottom:0}
+.step::before{
+  counter-increment:step; content:counter(step,decimal-leading-zero);
+  font-family:var(--font-mono); font-size:.75rem; color:var(--accent);
+  padding-top:3px; font-variant-numeric:tabular-nums;
+}
+.step h3{grid-column:2}
+.step p{grid-column:2; color:var(--muted); font-size:.94rem}
+
+.grid2{display:grid; gap:18px; grid-template-columns:repeat(auto-fit,minmax(min(100%,340px),1fr))}
+.card{border:1px solid var(--line); border-radius:4px; padding:18px; background:var(--surface); display:grid; gap:8px; min-width:0}
+.card h3{color:var(--fg)}
+.card p{color:var(--muted); font-size:.92rem}
+
+pre{
+  margin:0; background:var(--sunk); border:1px solid var(--line); border-radius:4px;
+  padding:14px; overflow-x:auto; font-family:var(--font-mono); font-size:.8rem; line-height:1.7;
+}
+pre .c{color:var(--muted)}
+pre .k{color:var(--accent)}
+pre .g{color:var(--ok)}
+figure{margin:0; display:grid; gap:8px; min-width:0}
+figcaption{font-size:.84rem; color:var(--muted)}
+
+table{width:100%; border-collapse:collapse; font-size:.92rem}
+.tablewrap{overflow-x:auto; border:1px solid var(--line); border-radius:4px; background:var(--surface)}
+th,td{text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); vertical-align:top}
+tr:last-child th,tr:last-child td{border-bottom:0}
+th{font-weight:500; color:var(--muted); white-space:nowrap; width:1%}
+td{font-family:var(--font-mono); font-size:.84rem}
+
+footer{border-top:1px solid var(--line); background:var(--surface)}
+footer .wrap{padding-block:26px; display:flex; flex-wrap:wrap; gap:8px 20px; align-items:center; font-size:.86rem; color:var(--muted)}
+footer a{color:var(--muted)}
+footer .right{margin-left:auto; font-family:var(--font-mono); font-size:.78rem}
+
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+</style>
+</head>
+<body>
+
+<header class="masthead">
+  <div class="wrap">
+    <span class="wordmark">sms&#8209;gateway<b>()</b></span>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#reliability">Reliability</a>
+      <a href="#start">Start</a>
+      <a href="https://github.com/Legion112/sms-gateway">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<div class="hero">
+  <div class="wrap">
+    <p class="eyebrow">Quectel EC25-EUX &middot; Raspberry Pi &middot; Go</p>
+    <h1>SMS off a cellular modem, into Telegram.</h1>
+    <p class="lede">A small daemon that watches one or more LTE modems over
+      <strong>AT</strong>, decodes the PDUs, reassembles multipart messages, and forwards each
+      one to whoever is meant to read it &mdash; then frees the slot on the modem.</p>
+
+    <div class="cta">
+      <a class="btn btn-primary" href="https://github.com/Legion112/sms-gateway">View on GitHub</a>
+      <a class="btn btn-ghost" href="#start">Quick start</a>
+    </div>
+
+    <figure>
+      <div class="panel">
+        <div class="panel-head">
+          <span class="eyebrow">Modem status</span>
+          <span class="eyebrow">sms-gateway-watch</span>
+        </div>
+        <div class="panel-body">
+          <div class="unit">
+            <div class="unit-id"><span class="lamp"></span>ec25-main<span class="pill">up</span></div>
+            <dl class="readouts">
+              <dt>Network</dt><dd>registered, roaming</dd>
+              <dt>Storage</dt><dd>0 / 255</dd>
+              <dt>Polls</dt><dd>180</dd>
+              <dt>Reconnects</dt><dd>0</dd>
+            </dl>
+          </div>
+          <div class="unit">
+            <div class="unit-id"><span class="lamp"></span>ec25-backup<span class="pill">up</span></div>
+            <dl class="readouts">
+              <dt>Network</dt><dd>registered, roaming</dd>
+              <dt>Storage</dt><dd>0 / 255</dd>
+              <dt>Polls</dt><dd>180</dd>
+              <dt>Reconnects</dt><dd>0</dd>
+            </dl>
+          </div>
+        </div>
+      </div>
+      <figcaption>Half an hour of a two-modem deployment, as the daemon reports it:
+        180 polls at a ten-second interval, nothing missed.</figcaption>
+    </figure>
+  </div>
+</div>
+
+<section id="how">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Signal chain</p>
+      <h2>What happens to a message</h2>
+      <p class="lede">Each step is where something can go wrong, so each step is where
+        the daemon keeps state.</p>
+    </div>
+
+    <div class="chain">
+      <div class="step">
+        <h3>The modem stores it</h3>
+        <p>An EC25 holds 255 messages. When that fills, it stops accepting new ones
+          silently &mdash; no error, no queue, nothing in the log.</p>
+      </div>
+      <div class="step">
+        <h3>The daemon lists and decodes</h3>
+        <p><code>AT+CMGL</code> in PDU mode, decoded in Go: GSM&nbsp;7-bit and UCS-2,
+          sender, timestamp, and the user-data header that marks a segment.</p>
+      </div>
+      <div class="step">
+        <h3>Segments are reassembled</h3>
+        <p>A long SMS arrives in pieces that can be minutes apart. They are stored and
+          merged when complete, or forwarded partial once the assembly timeout passes.</p>
+      </div>
+      <div class="step">
+        <h3>Routed by the SIM it arrived on</h3>
+        <p>The ICCID is resolved to a phone number, so a rule can say
+          &ldquo;anything to this line goes to that person&rdquo; rather than naming a modem.</p>
+      </div>
+      <div class="step">
+        <h3>Delivered, and recorded</h3>
+        <p>Delivery is tracked per channel in SQLite. A failed send is retried; a message
+          already delivered is never sent twice.</p>
+      </div>
+      <div class="step">
+        <h3>The slot is freed</h3>
+        <p><code>AT+CMGD</code> runs only after every channel has a recorded success.
+          The database keeps the message, so the modem never fills up and no history is lost.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="reliability">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Running unattended</p>
+      <h2>It is supposed to survive the night</h2>
+      <p class="lede">A gateway nobody is watching fails quietly. Most of the work here
+        is about noticing.</p>
+    </div>
+
+    <div class="grid2">
+      <div class="card">
+        <h3>Modems are supervised</h3>
+        <p>A USB re-enumeration, a read timeout, a modem that stops answering: the watch
+          loop is reopened with exponential backoff and retried indefinitely. One dead
+          modem cannot take the other down with it.</p>
+      </div>
+      <div class="card">
+        <h3>Outages are reported</h3>
+        <p>A modem that has not completed a poll for five minutes is announced once, and
+          announced again when it recovers, with the length of the outage. A failed
+          alert is retried rather than dropped.</p>
+      </div>
+      <div class="card">
+        <h3>Reconnects re-read storage</h3>
+        <p>Messages that arrive while the port is down are only visible in a fresh
+          listing, so every reconnect re-lists the modem instead of resuming blind.</p>
+      </div>
+      <div class="card">
+        <h3>One bad message stays contained</h3>
+        <p>A segment the pipeline cannot handle is logged and skipped. It never aborts
+          the batch, and it never stops the messages behind it from arriving.</p>
+      </div>
+    </div>
+
+    <div style="margin-top:22px">
+      <figure>
+<pre><span class="c"># a modem disappears and comes back, unattended</span>
+modem_down   modem=ec25-main uptime=4h12m retry_in=2s error=read: file already closed
+modem_up     modem=ec25-main <span class="c">(reconnected)</span>
+<span class="g">forwarded</span>    modem=ec25-main id=0 channel=vika-telegram rule=line-a
+<span class="g">purged</span>       modem=ec25-main id=0 slot=0
+
+<span class="c"># and the heartbeat, so a healthy gateway proves it is healthy</span>
+modem_health modem=ec25-main   state=up last_poll=9s polls=180 reconnects=0
+modem_health modem=ec25-backup state=up last_poll=9s polls=180 reconnects=0</pre>
+        <figcaption>Journal output from the watch daemon.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <div class="sec-head">
+      <p class="eyebrow">Quick start</p>
+      <h2>Point it at a modem</h2>
+      <p class="lede">Two binaries: a CLI for inspecting the hardware, and the watch
+        daemon that does the forwarding.</p>
+    </div>
+
+    <div class="grid2">
+      <figure>
+        <figcaption>Check the modem answers before anything else.</figcaption>
+<pre>$ sms-gateway status --modem ec25-main
+
+sim:      ready
+network:  registered (roaming)
+messages: ME 0/255
+sms_ready: true</pre>
+      </figure>
+
+      <figure>
+        <figcaption><code>config.yaml</code> &mdash; routing by the line a message arrived on.</figcaption>
+<pre><span class="k">sim_numbers:</span>
+  "8999801234567890123": "+998901234567"
+
+<span class="k">forward_rules:</span>
+  - name: line-a
+    to_line: "+998901234567"
+    to: [my-telegram]
+
+<span class="k">alerts:</span>
+  after: 5m
+  channels: [my-telegram]</pre>
+      </figure>
+    </div>
+
+    <div class="tablewrap" style="margin-top:22px">
+      <table>
+        <tbody>
+          <tr><th scope="row">Hardware</th><td>Quectel EC25-EUX over USB; several modems on one host</td></tr>
+          <tr><th scope="row">Drivers</th><td>serial (direct AT) &middot; mm (ModemManager over D-Bus)</td></tr>
+          <tr><th scope="row">Encodings</th><td>GSM 7-bit, UCS-2, concatenated user-data headers</td></tr>
+          <tr><th scope="row">Delivery</th><td>Telegram bot, per-channel delivery state in SQLite</td></tr>
+          <tr><th scope="row">Deployment</th><td>systemd unit, Raspberry Pi (linux/arm64)</td></tr>
+          <tr><th scope="row">Language</th><td>Go 1.26, no cgo</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Built for a Raspberry Pi with two SIMs roaming abroad.</span>
+    <span class="right"><a href="https://github.com/Legion112/sms-gateway">github.com/Legion112/sms-gateway</a></span>
+  </div>
+</footer>
+
+</body>
+</html>
