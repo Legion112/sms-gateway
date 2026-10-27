@@ -42,6 +42,7 @@ Forward channels (Telegram, email, SMS, …) implement `internal/forward.Channel
 | `ping` | Check modem connectivity |
 | `status` | Show SIM and SMS readiness |
 | `messages` | List all SMS messages |
+| `messages prune` | Free modem storage slots holding already-forwarded SMS |
 | `send` | Send an SMS (`--number`, `--text`) |
 | `modems list` | List configured modems; `--discover` shows ModemManager indices |
 | `channel test` | Send a test message via a forward channel (e.g. Telegram) |
@@ -188,6 +189,7 @@ Requires `modems`, `channels`, `forward_rules`, and `storage.path` in config (se
 | `storage.path` | SQLite database for messages and delivery state |
 | `watch.catch_up_on_start` | Forward existing inbound SMS on startup |
 | `watch.serial_poll_interval` | Poll interval for `serial` modems (default 10s) |
+| `watch.delete_after_forward` | Free the modem storage slot once every channel is delivered (default off) |
 
 **Modem backends:**
 
@@ -360,6 +362,31 @@ Or use the **mm** driver (default) to avoid serial port contention entirely.
 ### SIM not detected (`sim-missing`)
 
 Blocks SMS but not ping. Reseat the nano-SIM and check `mmcli -m 0 | grep -i sim`.
+
+### Modem storage full: incoming SMS stop arriving
+
+An EC25 holds 255 messages. Once `status` reports `messages: ME 255/255` the modem
+**refuses new SMS outright** — they are not queued and they do not arrive late. Nothing
+in the gateway raises an alarm, so the first symptom is silence on that line.
+
+```bash
+./bin/sms-gateway status --modem ec25-main   # messages: ME 255/255
+```
+
+Set `watch.delete_after_forward: true` so the daemon frees each slot once every channel
+for that message is delivered. The slot is freed only after a *recorded successful*
+delivery, and `sms.db` keeps the message, so freeing it loses no history. A message that
+matches no forward rule is never deleted.
+
+To clear an existing backlog by hand:
+
+```bash
+./bin/sms-gateway messages prune --modem ec25-main           # dry run
+./bin/sms-gateway messages prune --modem ec25-main --yes     # delete them
+```
+
+`prune` consults `storage.path` and only deletes slots the database shows as delivered
+on every channel; `--all` additionally deletes slots with no confirmed delivery.
 
 ## Project layout
 

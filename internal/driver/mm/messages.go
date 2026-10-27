@@ -5,6 +5,7 @@ package mm
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/godbus/dbus/v5"
 	"github.com/legion/sms-gateway/internal/modem"
@@ -130,5 +131,37 @@ func smsStorageName(storage string) string {
 			return "unknown"
 		}
 		return storage
+	}
+}
+
+// DeleteMessage removes an SMS object from ModemManager storage.
+func (d *Driver) DeleteMessage(ctx context.Context, id string) error {
+	if id == "" {
+		return fmt.Errorf("delete: empty message path")
+	}
+	path := dbus.ObjectPath(id)
+	if !path.IsValid() {
+		return fmt.Errorf("delete: %q is not a D-Bus object path", id)
+	}
+	if err := d.deleteSMS(ctx, path); err != nil {
+		return fmt.Errorf("delete %s: %w", id, err)
+	}
+	return nil
+}
+
+func (d *Driver) deleteSMS(ctx context.Context, path dbus.ObjectPath) error {
+	ch := make(chan error, 1)
+	go func() {
+		obj := d.conn.Object(mmBusName, d.modemPath)
+		ch <- obj.Call(messagingInterface+".Delete", 0, path).Err
+	}()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d.timeout):
+		return fmt.Errorf("timeout deleting SMS")
+	case err := <-ch:
+		return err
 	}
 }

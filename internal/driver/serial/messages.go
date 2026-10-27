@@ -307,3 +307,19 @@ func cmglStatus(raw string) string {
 		return strings.ToLower(raw)
 	}
 }
+
+// DeleteMessage frees one CMGL storage slot via AT+CMGD.
+// setup is not re-run here: callers list before deleting, and New already ran it.
+func (d *Driver) DeleteMessage(ctx context.Context, id string) error {
+	index := strings.TrimSpace(id)
+	if index == "" {
+		return fmt.Errorf("delete: empty message index")
+	}
+	if _, err := strconv.Atoi(index); err != nil {
+		return fmt.Errorf("delete: %q is not a storage index", id)
+	}
+	if _, err := d.exec(ctx, "AT+CMGD="+index); err != nil {
+		return fmt.Errorf("delete index %s: %w", index, err)
+	}
+	return nil
+}

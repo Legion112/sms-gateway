@@ -91,3 +91,7 @@ watch:
   catch_up_on_start: true
   serial_poll_interval: 10s
   concat_assembly_timeout: 60s
+  # Free the modem storage slot once every channel for a message is delivered.
+  # The local database keeps the message, so nothing is lost. Without this the
+  # modem fills up (EC25 holds 255) and then silently refuses new SMS.
+  delete_after_forward: true

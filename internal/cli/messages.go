@@ -17,6 +17,7 @@ func newMessagesCmd(flags *cmdutil.Flags) *cobra.Command {
 		},
 	}
 	cmdutil.BindModemFlags(cmd, flags)
+	cmd.AddCommand(newPruneCmd(flags))
 	return cmd
 }
 

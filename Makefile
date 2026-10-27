@@ -2,6 +2,7 @@
 
 BIN_DIR := bin
 BINS := sms-gateway sms-gateway-watch
+GO_SRC := $(shell find cmd internal -name '*.go') go.mod go.sum
 
 PI_HOST ?= first_pi
 PI_DIR := ~/smsgateway
@@ -9,7 +10,7 @@ PI_GO_PATH := export PATH=$$HOME/.local/go1.26/bin:$$PATH
 
 build: $(addprefix $(BIN_DIR)/,$(BINS))
 
-$(BIN_DIR)/%: cmd/%/main.go
+$(BIN_DIR)/%: $(GO_SRC)
 	mkdir -p $(BIN_DIR)
 	go build -o $@ ./cmd/$*
 
@@ -20,10 +21,10 @@ deploy_pi:
 	rsync -avz --exclude='bin/' --exclude='config.yaml' --exclude='data/' ./ $(PI_HOST):$(PI_DIR)
 
 deploy-tunnel: deploy_pi
-	ssh $(PI_HOST) 'sudo cp $(PI_DIR)/deploy/systemd/sms-tunnel.service /etc/systemd/system/sms-tunnel.service && sudo systemctl daemon-reload && sudo systemctl enable sms-tunnel && sudo systemctl restart sms-tunnel'
+	ssh -t $(PI_HOST) 'sudo cp $(PI_DIR)/deploy/systemd/sms-tunnel.service /etc/systemd/system/sms-tunnel.service && sudo systemctl daemon-reload && sudo systemctl enable sms-tunnel && sudo systemctl restart sms-tunnel'
 
 deploy-watch: deploy_pi
-	ssh $(PI_HOST) '$(PI_GO_PATH); cd $(PI_DIR) && make install-watch-pi'
+	ssh -t $(PI_HOST) '$(PI_GO_PATH); cd $(PI_DIR) && make install-watch-pi'
 
 install-watch-pi: build
 	sudo cp deploy/systemd/sms-gateway-watch.pi.service /etc/systemd/system/sms-gateway-watch.service

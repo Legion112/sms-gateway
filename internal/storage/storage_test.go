@@ -145,3 +145,48 @@ func TestDeliveryTracking(t *testing.T) {
 		t.Fatalf("after delivered need=%v err=%v", need, err)
 	}
 }
+
+func TestIsFullyDelivered(t *testing.T) {
+	store, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	if _, err := store.InsertMessage(storage.Message{
+		ID: "m1:12", Modem: "m1", FromNumber: "UZCARD", Body: "hi", ReceivedAt: "t1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// No delivery attempt recorded yet: never treat the slot as free.
+	if done, err := store.IsFullyDelivered("m1:12"); err != nil || done {
+		t.Fatalf("no attempts: done=%v err=%v want false", done, err)
+	}
+
+	if err := store.MarkDeliveryFailed("m1:12", "tg", "telegram unreachable"); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := store.IsFullyDelivered("m1:12"); err != nil || done {
+		t.Fatalf("failed attempt: done=%v err=%v want false", done, err)
+	}
+
+	if err := store.MarkDelivered("m1:12", "tg"); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := store.IsFullyDelivered("m1:12"); err != nil || !done {
+		t.Fatalf("delivered: done=%v err=%v want true", done, err)
+	}
+
+	// A second channel still pending holds the slot.
+	if err := store.MarkDeliveryFailed("m1:12", "email", "smtp down"); err != nil {
+		t.Fatal(err)
+	}
+	if done, err := store.IsFullyDelivered("m1:12"); err != nil || done {
+		t.Fatalf("one channel pending: done=%v err=%v want false", done, err)
+	}
+
+	if done, err := store.IsFullyDelivered("m1:nonexistent"); err != nil || done {
+		t.Fatalf("unknown id: done=%v err=%v want false", done, err)
+	}
+}

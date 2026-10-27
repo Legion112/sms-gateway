@@ -256,3 +256,19 @@ func (s *Store) migrateLegacyIDs() error {
 	}
 	return tx.Commit()
 }
+
+// IsFullyDelivered reports whether messageID has at least one delivery attempt
+// recorded and every recorded channel succeeded. A message with no delivery rows
+// is not considered delivered, so its modem slot is never freed on that basis.
+func (s *Store) IsFullyDelivered(messageID string) (bool, error) {
+	var total, sent int
+	err := s.db.QueryRow(
+		`SELECT COUNT(*), COUNT(CASE WHEN sent_at IS NOT NULL AND sent_at != '' THEN 1 END)
+		 FROM deliveries WHERE message_id = ?`,
+		messageID,
+	).Scan(&total, &sent)
+	if err != nil {
+		return false, err
+	}
+	return total > 0 && total == sent, nil
+}

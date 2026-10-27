@@ -78,7 +78,7 @@ func (s *Service) catchUpModem(ctx context.Context, modemName string, entry conf
 	if err := s.refreshSimLine(ctx, modemName, m); err != nil && ctx.Err() == nil {
 		s.deps.Log("sim lookup modem %s: %v", modemName, err)
 	}
-	return s.catchUp(ctx, modemName, m)
+	return s.catchUp(ctx, modemName, m, s.slotDeleter(modemName, entry, m))
 }
 
 func (s *Service) runModem(ctx context.Context, modemName string, entry config.ModemEntry, catchUp bool) error {
@@ -92,12 +92,14 @@ func (s *Service) runModem(ctx context.Context, modemName string, entry config.M
 		s.deps.Log("sim lookup modem %s: %v", modemName, err)
 	}
 
+	del := s.slotDeleter(modemName, entry, m)
+
 	partsHandler := func(ctx context.Context, parts []modem.Part) error {
-		return s.ingestParts(ctx, modemName, parts)
+		return s.ingestParts(ctx, modemName, del, parts)
 	}
 
 	if catchUp {
-		if err := s.catchUp(ctx, modemName, m); err != nil && ctx.Err() == nil {
+		if err := s.catchUp(ctx, modemName, m, del); err != nil && ctx.Err() == nil {
 			s.deps.Log("catch-up modem %s: %v", modemName, err)
 		}
 	}
@@ -105,7 +107,7 @@ func (s *Service) runModem(ctx context.Context, modemName string, entry config.M
 	switch entry.Driver {
 	case config.DriverMM:
 		return runMMWatch(ctx, m, func(ctx context.Context, msg modem.Message) error {
-			return s.ingestParts(ctx, modemName, []modem.Part{
+			return s.ingestParts(ctx, modemName, del, []modem.Part{
 				{
 					ID:        msg.ID,
 					From:      msg.From,
@@ -124,14 +126,14 @@ func (s *Service) runModem(ctx context.Context, modemName string, entry config.M
 	}
 }
 
-func (s *Service) catchUp(ctx context.Context, modemName string, m modem.Modem) error {
+func (s *Service) catchUp(ctx context.Context, modemName string, m modem.Modem, del modem.SlotDeleter) error {
 	listCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	parts, err := listMessageParts(listCtx, m)
 	if err != nil {
 		return err
 	}
-	return s.ingestParts(ctx, modemName, parts)
+	return s.ingestParts(ctx, modemName, del, parts)
 }
 
 func listMessageParts(ctx context.Context, m modem.Modem) ([]modem.Part, error) {
@@ -183,11 +185,11 @@ func (s *Service) simLineFor(modemName string) cmdutil.ResolvedLine {
 	return s.simLines[modemName]
 }
 
-func (s *Service) ingestParts(ctx context.Context, modemName string, parts []modem.Part) error {
+func (s *Service) ingestParts(ctx context.Context, modemName string, del modem.SlotDeleter, parts []modem.Part) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if err := s.flushTimedOutConcat(ctx, modemName); err != nil {
+	if err := s.flushTimedOutConcat(ctx, modemName, del); err != nil {
 		return err
 	}
 
@@ -195,33 +197,33 @@ func (s *Service) ingestParts(ctx context.Context, modemName string, parts []mod
 		if !modem.IsInbound(part.State) {
 			continue
 		}
-		if err := s.ingestPart(ctx, modemName, part); err != nil {
+		if err := s.ingestPart(ctx, modemName, del, part); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) ingestPart(ctx context.Context, modemName string, part modem.Part) error {
+func (s *Service) ingestPart(ctx context.Context, modemName string, del modem.SlotDeleter, part modem.Part) error {
 	segmentID := storage.MessageKey(modemName, part.ID, part.Timestamp)
 	superseded, err := s.deps.Store.IsSuperseded(segmentID)
 	if err != nil {
 		return err
 	}
 	if superseded {
-		return nil
+		return s.purgeMergedSegment(ctx, modemName, del, part)
 	}
 
 	if !smsconcat.IsConcat(part) {
-		return s.ingest(ctx, modemName, smsconcat.PartToMessage(part), "")
+		return s.ingest(ctx, modemName, smsconcat.PartToMessage(part), "", del, []string{part.ID})
 	}
 
-	merged, _, err := s.deps.Store.IsConcatMerged(modemName, part.From, part.ConcatRef, part.PartTotal)
+	merged, mergedID, err := s.deps.Store.IsConcatMerged(modemName, part.From, part.ConcatRef, part.PartTotal)
 	if err != nil {
 		return err
 	}
 	if merged {
-		return nil
+		return s.purgeForwarded(ctx, modemName, part.ID, mergedID, del, []string{part.ID})
 	}
 
 	complete, storedParts, err := s.deps.Store.UpsertConcatPart(storage.ConcatPart{
@@ -241,10 +243,10 @@ func (s *Service) ingestPart(ctx context.Context, modemName string, part modem.P
 	if !complete {
 		return nil
 	}
-	return s.deliverMergedConcat(ctx, modemName, storedParts, false)
+	return s.deliverMergedConcat(ctx, modemName, del, storedParts, false)
 }
 
-func (s *Service) flushTimedOutConcat(ctx context.Context, modemName string) error {
+func (s *Service) flushTimedOutConcat(ctx context.Context, modemName string, del modem.SlotDeleter) error {
 	keys, err := s.deps.Store.ListTimedOutConcatGroups(modemName, s.cfg.ConcatAssemblyTimeout())
 	if err != nil {
 		return err
@@ -264,14 +266,14 @@ func (s *Service) flushTimedOutConcat(ctx context.Context, modemName string) err
 		if len(parts) == 0 {
 			continue
 		}
-		if err := s.deliverMergedConcat(ctx, modemName, parts, true); err != nil {
+		if err := s.deliverMergedConcat(ctx, modemName, del, parts, true); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (s *Service) deliverMergedConcat(ctx context.Context, modemName string, parts []storage.ConcatPart, incomplete bool) error {
+func (s *Service) deliverMergedConcat(ctx context.Context, modemName string, del modem.SlotDeleter, parts []storage.ConcatPart, incomplete bool) error {
 	if len(parts) == 0 {
 		return nil
 	}
@@ -292,11 +294,13 @@ func (s *Service) deliverMergedConcat(ctx context.Context, modemName string, par
 	mergedID := storage.ConcatMessageKey(modemName, first.FromNumber, first.ConcatRef, first.PartTotal, receivedAt)
 
 	segmentIDs := make([]string, len(parts))
+	slots := make([]string, len(parts))
 	for i, p := range parts {
 		segmentIDs[i] = storage.MessageKey(modemName, p.ModemID, p.ReceivedAt)
+		slots[i] = p.ModemID
 	}
 
-	if err := s.ingest(ctx, modemName, msg, mergedID); err != nil {
+	if err := s.ingest(ctx, modemName, msg, mergedID, del, slots); err != nil {
 		return err
 	}
 	if err := s.deps.Store.MarkConcatMerged(modemName, first.FromNumber, first.ConcatRef, first.PartTotal, mergedID, segmentIDs); err != nil {
@@ -310,7 +314,7 @@ func (s *Service) deliverMergedConcat(ctx context.Context, modemName string, par
 	return nil
 }
 
-func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Message, storageID string) error {
+func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Message, storageID string, del modem.SlotDeleter, slots []string) error {
 	line := s.simLineFor(modemName)
 	inbound := forward.InboundSMS{
 		Modem:   modemName,
@@ -388,6 +392,67 @@ func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Messag
 			return err
 		}
 		s.deps.Log("forwarded modem=%s id=%s channel=%s rule=%s", modemName, msg.ID, chName, ruleName)
+	}
+
+	return s.purgeForwarded(ctx, modemName, msg.ID, storageID, del, slots)
+}
+
+// slotDeleter returns the modem as a SlotDeleter when purging is enabled and the
+// driver supports it, or nil to leave modem storage untouched.
+func (s *Service) slotDeleter(modemName string, entry config.ModemEntry, m modem.Modem) modem.SlotDeleter {
+	if !s.cfg.Watch.DeleteAfterForward {
+		return nil
+	}
+	del, ok := m.(modem.SlotDeleter)
+	if !ok {
+		s.deps.Log("delete_after_forward: modem=%s driver=%s cannot delete from storage", modemName, entry.Driver)
+		return nil
+	}
+	return del
+}
+
+// purgeMergedSegment frees the slot of a segment that an earlier pass already
+// merged into a delivered message, which the ingest path would otherwise skip.
+func (s *Service) purgeMergedSegment(ctx context.Context, modemName string, del modem.SlotDeleter, part modem.Part) error {
+	if del == nil || !smsconcat.IsConcat(part) {
+		return nil
+	}
+	merged, mergedID, err := s.deps.Store.IsConcatMerged(modemName, part.From, part.ConcatRef, part.PartTotal)
+	if err != nil {
+		return err
+	}
+	if !merged {
+		return nil
+	}
+	return s.purgeForwarded(ctx, modemName, part.ID, mergedID, del, []string{part.ID})
+}
+
+// purgeForwarded frees the modem storage slots backing a message, but only once
+// every channel the rule selected has a recorded successful delivery. The local
+// database keeps the message, so freeing the slot loses no history.
+func (s *Service) purgeForwarded(ctx context.Context, modemName, msgID, storageID string, del modem.SlotDeleter, slots []string) error {
+	if del == nil || len(slots) == 0 {
+		return nil
+	}
+	delivered, err := s.deps.Store.IsFullyDelivered(storageID)
+	if err != nil {
+		return err
+	}
+	if !delivered {
+		return nil
+	}
+	for _, slot := range slots {
+		if slot == "" {
+			continue
+		}
+		delCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+		err := del.DeleteMessage(delCtx, slot)
+		cancel()
+		if err != nil {
+			s.deps.Log("purge_failed modem=%s id=%s slot=%s error=%v", modemName, msgID, slot, err)
+			continue
+		}
+		s.deps.Log("purged modem=%s id=%s slot=%s", modemName, msgID, slot)
 	}
 	return nil
 }

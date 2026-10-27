@@ -21,3 +21,10 @@ type PartLister interface {
 	Modem
 	ListMessageParts(ctx context.Context) ([]Part, error)
 }
+
+// SlotDeleter can free a message slot in the modem's own storage.
+// IDs are driver-local: a CMGL index for serial, a D-Bus object path for mm.
+type SlotDeleter interface {
+	Modem
+	DeleteMessage(ctx context.Context, id string) error
+}

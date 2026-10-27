@@ -13,6 +13,7 @@ type StorageConfig struct {
 // WatchConfig holds daemon runtime settings.
 type WatchConfig struct {
 	CatchUpOnStart        bool          `yaml:"catch_up_on_start"`
+	DeleteAfterForward    bool          `yaml:"delete_after_forward"`
 	SerialPollInterval    time.Duration `yaml:"-"`
 	ConcatAssemblyTimeout time.Duration `yaml:"-"`
 }
@@ -23,6 +24,7 @@ type watchFile struct {
 	} `yaml:"storage"`
 	Watch struct {
 		CatchUpOnStart        bool   `yaml:"catch_up_on_start"`
+		DeleteAfterForward    bool   `yaml:"delete_after_forward"`
 		SerialPollInterval    string `yaml:"serial_poll_interval"`
 		ConcatAssemblyTimeout string `yaml:"concat_assembly_timeout"`
 	} `yaml:"watch"`
@@ -33,6 +35,7 @@ func applyWatchFile(file *watchFile, cfg *Config) error {
 		cfg.Storage.Path = file.Storage.Path
 	}
 	cfg.Watch.CatchUpOnStart = file.Watch.CatchUpOnStart
+	cfg.Watch.DeleteAfterForward = file.Watch.DeleteAfterForward
 	if file.Watch.SerialPollInterval != "" {
 		d, err := time.ParseDuration(file.Watch.SerialPollInterval)
 		if err != nil {

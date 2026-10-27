@@ -1,6 +1,7 @@
 package serial
 
 import (
+	"context"
 	"testing"
 
 	"github.com/legion/sms-gateway/internal/smsconcat"
@@ -158,4 +159,14 @@ func parsePart(t *testing.T, id, resp string) smsconcat.Part {
 		t.Fatalf("parseQCMGR(%q) failed", id)
 	}
 	return part
+}
+
+func TestDeleteMessageRejectsNonIndex(t *testing.T) {
+	d := &Driver{}
+	ctx := context.Background()
+	for _, id := range []string{"", "  ", "abc", "/org/freedesktop/ModemManager1/SMS/3"} {
+		if err := d.DeleteMessage(ctx, id); err == nil {
+			t.Fatalf("id %q: want an error before any AT command is written", id)
+		}
+	}
 }
