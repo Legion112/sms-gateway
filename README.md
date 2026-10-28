@@ -195,6 +195,7 @@ Requires `modems`, `channels`, `forward_rules`, and `storage.path` in config (se
 | `watch.stall_timeout` | Report a connected modem that has not completed a poll in this long (default 5m) |
 | `watch.health_interval` | How often to log a `modem_health` heartbeat per modem (default 30m) |
 | `watch.registration_interval` | How often to read each modem's per-domain registration (default 2m) |
+| `watch.state_path` | Where the daemon publishes its view for `status` to read (default `watch-state.json` beside `storage.path`) |
 | `alerts.after` | Report a modem silent this long, or without a proven SMS path this long (default 5m) |
 | `alerts.channels` | Channels operational alerts go to; empty switches alerting off |
 | `alerts.sms_path` | Alert when a modem has no proven path for incoming SMS (default on) |
@@ -474,6 +475,8 @@ What that looks like in the journal:
 | `modem_sms_path modem=X path=… cs=… ps=… ims=…` | Registration read; an SMS has a way in (`direct`, `ims`), or none could be judged (`unknown`) |
 | `modem_sms_path_lost modem=X path=unproven` | Attached for data with no circuit-switched or IMS registration |
 | `modem_sms_path_lost modem=X path=offline` | No domain is registered at all, while the modem still answers AT |
+| `state_unpublished path=X error=…` | The state file `status` reads could not be written; reported once, and reception is unaffected |
+| `state_published path=X (writable again)` | That write started working again |
 | `registration_unreadable modem=X` | The registration queries stopped answering; logged once, not per interval |
 | `ingest_failed modem=X id=N` | One message could not be processed; the rest of the batch continued |
 | `channel_missing modem=X channel=Y` | A forward rule names a channel that is not configured |
@@ -603,6 +606,54 @@ One known limitation: firmware that does not implement `AT+CIREG?` reports
 registration is not one to bet an SMS on, but on such firmware an IMS-only setup would
 read as `unproven`.
 
+### Reading a modem the daemon is holding
+
+A serial modem has one AT port and the daemon keeps it open for the life of the process,
+so on a working gateway `status` cannot talk to the hardware at all:
+
+```
+error: open /dev/ttyUSB6: Serial port busy
+```
+
+Stopping the daemon to answer a question about reception is the wrong trade, so the
+daemon publishes what it already knows to `watch.state_path` instead, and `status` reads
+that when the port is busy:
+
+```
+source: watch daemon (pid 523538), published 41s ago
+reason: the modem could not be opened: open /dev/ttyUSB6: Serial port busy
+
+device: /dev/ttyUSB6
+state: up
+last_poll: 9s ago
+polls: 1620
+reconnects: 0
+cs_registration: registered (roaming)
+ps_registration: registered (roaming)
+ims_registration: unsupported
+sms_path: direct
+registration_read: 1m12s ago
+
+note: sim state, message count and live network state are only readable with the port; stop sms-gateway-watch to read them
+```
+
+Three things keep that from being misleading:
+
+- **Every reading is dated.** The file is republished on each health tick and on every
+  transition, and it records the daemon's own cadence, so `status` warns when what it
+  read is older than the daemon should have left it — a file left behind by a daemon
+  that has stopped is never presented as the current state of the radio.
+- **It never answers partly.** If any modem asked about is missing from the file,
+  `status` declines and prints the original error rather than reporting on some of them
+  in a way that reads as all of them.
+- **It says what it cannot say.** SIM state, message count and live network state are
+  not in the file, because nothing but the port can answer them.
+
+Publishing cannot fail a poll: an unwritable state file is logged once as
+`state_unpublished` and the daemon carries on. The `mm` driver does not need any of
+this, since ModemManager multiplexes its modems and `status` can open them while the
+daemon runs.
+
 ## Project layout
 
 ```
@@ -619,6 +670,7 @@ internal/forward/telegrambot/  Telegram Bot API driver
 internal/storage/         SQLite message and delivery store
 internal/watch/           Watch daemon orchestration
 internal/alert/           Modem outage policy and alert delivery
+internal/state/           What the daemon publishes for the CLI to read
 cmd/sms-gateway-watch/    Watch daemon binary
 config.example.yaml       Example configuration
 deploy/env.pi.example     Pi env file template (bot token)

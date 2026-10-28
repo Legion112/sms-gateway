@@ -40,7 +40,10 @@ func (s *Service) healthFor(modemName string) *modemHealth {
 	}
 	h, ok := s.health[modemName]
 	if !ok {
-		h = &modemHealth{}
+		// Not the zero value: RegState 0 is a real answer meaning "not
+		// registered", so a record that has never been read has to start at
+		// RegAbsent or it reports a fault nobody observed.
+		h = &modemHealth{registration: modem.NewRegistration()}
 		s.health[modemName] = h
 	}
 	return h
@@ -58,12 +61,15 @@ func (s *Service) markModemUp(modemName string) {
 	// before the outage would alert on the reconnect itself.
 	h.lastSMSPathOK = s.now()
 	h.smsPath = ""
+	h.registration = modem.NewRegistration()
 	h.lastRegCheck = time.Time{}
+	h.regReadFailed = false
 	s.healthMu.Unlock()
 
 	if reconnected {
 		s.deps.Log("modem_up modem=%s (reconnected)", modemName)
 	}
+	s.publishState()
 }
 
 // markModemDown records that the watch loop exited and the modem is unwatched
@@ -76,6 +82,8 @@ func (s *Service) markModemDown(modemName string, err error) {
 	h.lastErr = err
 	h.reconnects++
 	s.healthMu.Unlock()
+
+	s.publishState()
 }
 
 // markPollOK records a completed poll: the modem answered and everything it

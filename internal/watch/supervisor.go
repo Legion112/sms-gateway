@@ -108,6 +108,12 @@ func (s *Service) superviseHealth(ctx context.Context) {
 
 	mons := s.newMonitors(alertAfter)
 
+	// The published state is refreshed on this tick, so record it: a reader
+	// judges the file stale against the cadence that produced it rather than
+	// against a constant it would have to keep in step with this one.
+	s.stateInterval.Store(int64(tick))
+	s.publishState()
+
 	lastBeat := s.now()
 	for {
 		if !s.sleep(ctx, tick) {
@@ -119,6 +125,9 @@ func (s *Service) superviseHealth(ctx context.Context) {
 		now := s.now()
 		s.checkStalls(now, stall)
 		s.runAlerts(ctx, mons, now)
+		// After the checks, so the file carries the stall verdict they just
+		// reached rather than the one before it.
+		s.publishState()
 		if heartbeat > 0 && now.Sub(lastBeat) >= heartbeat {
 			lastBeat = now
 			s.logHealth(now)

@@ -99,6 +99,9 @@ type lab struct {
 	ch    *captureChannel
 	log   *labLog
 	store *storage.Store
+	// statePath is where the daemon publishes what it knows, which is the only
+	// way to read a modem's state while the daemon holds its port.
+	statePath string
 }
 
 // labOptions tunes a lab beyond what startLab sets up by default.
@@ -160,6 +163,10 @@ func startLabWith(t *testing.T, opts labOptions) *lab {
 	if cfg.Watch.RegistrationInterval == 0 {
 		cfg.Watch.RegistrationInterval = 50 * time.Millisecond
 	}
+	// The store is in memory here, so there is no database directory to derive
+	// a default from; the lab names the file itself.
+	statePath := filepath.Join(t.TempDir(), "watch-state.json")
+	cfg.Watch.StatePath = statePath
 
 	ch := &captureChannel{}
 	lg := &labLog{}
@@ -182,7 +189,7 @@ func startLabWith(t *testing.T, opts labOptions) *lab {
 		}
 	})
 
-	return &lab{sim: sim, ch: ch, log: lg, store: store}
+	return &lab{sim: sim, ch: ch, log: lg, store: store, statePath: statePath}
 }
 
 func waitUntil(cond func() bool, timeout time.Duration) bool {

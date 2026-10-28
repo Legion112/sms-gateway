@@ -129,6 +129,10 @@ watch:
   # only way to see a modem that is attached for data while an incoming SMS has
   # no way in. Read between SMS polls, on the goroutine that owns the AT port.
   registration_interval: 2m
+  # Where the daemon publishes what it knows about its modems, so `status` can
+  # report them while the daemon holds their ports. Defaults to
+  # watch-state.json beside storage.path; uncomment to put it elsewhere.
+  #state_path: /run/sms-gateway/watch-state.json
 
 # --- Operational alerts (about the gateway itself, not received SMS) ---
 #

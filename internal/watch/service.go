@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/legion/sms-gateway/internal/alert"
@@ -40,6 +41,15 @@ type Service struct {
 
 	healthMu sync.Mutex
 	health   map[string]*modemHealth
+
+	// stateMu serialises writes of the published state file so two transitions
+	// at once cannot interleave; stateWriteFailed makes the failure log
+	// edge-triggered. stateInterval holds the health supervisor's tick in
+	// nanoseconds, which the file records so a reader can judge its own
+	// staleness against the daemon's real cadence.
+	stateMu          sync.Mutex
+	stateWriteFailed bool
+	stateInterval    atomic.Int64
 
 	// Test seams. Production leaves these nil and falls back to the real
 	// factory, clock and timer.

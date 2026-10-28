@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"path/filepath"
 	"time"
 )
 
@@ -21,6 +22,7 @@ type WatchConfig struct {
 	StallTimeout          time.Duration `yaml:"-"`
 	HealthInterval        time.Duration `yaml:"-"`
 	RegistrationInterval  time.Duration `yaml:"-"`
+	StatePath             string        `yaml:"state_path"`
 }
 
 type watchFile struct {
@@ -37,6 +39,7 @@ type watchFile struct {
 		StallTimeout          string `yaml:"stall_timeout"`
 		HealthInterval        string `yaml:"health_interval"`
 		RegistrationInterval  string `yaml:"registration_interval"`
+		StatePath             string `yaml:"state_path"`
 	} `yaml:"watch"`
 }
 
@@ -46,6 +49,9 @@ func applyWatchFile(file *watchFile, cfg *Config) error {
 	}
 	cfg.Watch.CatchUpOnStart = file.Watch.CatchUpOnStart
 	cfg.Watch.DeleteAfterForward = file.Watch.DeleteAfterForward
+	if file.Watch.StatePath != "" {
+		cfg.Watch.StatePath = file.Watch.StatePath
+	}
 	for _, d := range []struct {
 		key   string
 		raw   string
@@ -181,4 +187,22 @@ func (cfg Config) RegistrationInterval() time.Duration {
 		return cfg.Watch.RegistrationInterval
 	}
 	return 2 * time.Minute
+}
+
+// StatePath is where the daemon publishes what it knows about its modems, so
+// the CLI can report it without taking a port away from the daemon. It defaults
+// to watch-state.json beside the message database, which is already the one
+// directory the daemon is known to be able to write.
+//
+// An empty storage.path leaves this empty, which switches publishing off: a
+// build with nowhere to put the file still receives SMS, and ValidateWatch
+// already refuses to start a daemon without a database.
+func (cfg Config) StatePath() string {
+	if cfg.Watch.StatePath != "" {
+		return cfg.Watch.StatePath
+	}
+	if cfg.Storage.Path == "" {
+		return ""
+	}
+	return filepath.Join(filepath.Dir(cfg.Storage.Path), "watch-state.json")
 }

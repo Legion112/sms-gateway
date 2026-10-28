@@ -358,3 +358,35 @@ func TestExampleConfigLoads(t *testing.T) {
 		t.Error("the example configures alert channels but alerting reads as off")
 	}
 }
+
+// The daemon publishes its view beside the message database by default, which
+// is the one directory it is already known to be able to write.
+func TestStatePathDefaultsBesideTheDatabase(t *testing.T) {
+	cfg, err := config.Load(config.Overrides{ConfigPath: writeWatchConfig(t, "")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join("data", "watch-state.json")
+	if got := cfg.StatePath(); got != want {
+		t.Errorf("StatePath() = %q, want %q", got, want)
+	}
+}
+
+func TestStatePathLoads(t *testing.T) {
+	path := writeWatchConfig(t, "  state_path: /run/sms-gateway/state.json\n")
+	cfg, err := config.Load(config.Overrides{ConfigPath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.StatePath(); got != "/run/sms-gateway/state.json" {
+		t.Errorf("StatePath() = %q, want the configured path", got)
+	}
+}
+
+// No database configured means nowhere to derive a default from, which switches
+// publishing off rather than guessing at a writable directory.
+func TestStatePathEmptyWithoutStorage(t *testing.T) {
+	if got := (config.Config{}).StatePath(); got != "" {
+		t.Errorf("StatePath() = %q, want empty", got)
+	}
+}

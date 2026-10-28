@@ -56,6 +56,9 @@ func (s *Service) checkRegistration(ctx context.Context, modemName string, m mod
 	if path == previous {
 		return
 	}
+	// A changed verdict is the one thing an operator runs `status` to see, so
+	// it is published now instead of at the next heartbeat.
+	s.publishState()
 	if path.Problem() {
 		// Worth its own line: from here on the modem looks healthy everywhere
 		// else while an SMS may have no way to reach the SIM.
