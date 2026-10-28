@@ -76,6 +76,7 @@ func statusOne(base config.Config, target cmdutil.ModemHandle) error {
 	fmt.Printf("modem: %s\n", status.ModemState)
 	fmt.Printf("network: %s\n", status.NetworkState)
 	printRadioPosture(target)
+	printRegistration(target)
 	fmt.Printf("messages: %s\n", status.MessageStore)
 	if status.MessageCount >= 0 {
 		fmt.Printf("message_count: %d\n", status.MessageCount)
@@ -109,5 +110,39 @@ func printRadioPosture(target cmdutil.ModemHandle) {
 	}
 	if posture.Operator == modem.OperatorManual {
 		fmt.Printf("warning: operator pinned manually; the modem will not reselect when this network degrades\n")
+	}
+}
+
+// printRegistration reports each domain's registration and what it means for
+// incoming SMS. The network line above it shows the best of the three, which is
+// the right answer to "has this modem got service" and hides the one this
+// section exists for: an LTE-only attach reads as registered while the domain
+// SMS travels over is not there at all.
+func printRegistration(target cmdutil.ModemHandle) {
+	reader, ok := target.Modem.(modem.RegistrationReader)
+	if !ok {
+		return
+	}
+	ctx, cancel := cmdutil.SMSContext(target.Config)
+	defer cancel()
+
+	reg, err := reader.ReadRegistration(ctx)
+	if err != nil {
+		fmt.Printf("registration: unreadable (%v)\n", err)
+		return
+	}
+	fmt.Printf("cs_registration: %s\n", reg.CS)
+	fmt.Printf("ps_registration: %s\n", reg.PS)
+	fmt.Printf("ims_registration: %s\n", reg.IMS)
+
+	path := reg.SMSPath()
+	fmt.Printf("sms_path: %s\n", path)
+	switch path {
+	case modem.SMSPathUnproven:
+		fmt.Printf("warning: attached for data with no circuit-switched or IMS registration; incoming SMS depend on the network carrying them over SGs\n")
+	case modem.SMSPathOffline:
+		fmt.Printf("warning: no domain is registered; this modem cannot receive SMS\n")
+	case modem.SMSPathIMS:
+		fmt.Printf("note: SMS arrive over IMS; there is no circuit-switched registration to fall back on\n")
 	}
 }

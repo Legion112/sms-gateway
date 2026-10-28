@@ -82,12 +82,12 @@ func newAlertFixture(t *testing.T, after time.Duration, modems ...string) *alert
 }
 
 // tick runs one supervisor pass at the fixture's current time.
-func (a *alertFixture) tick(ctx context.Context, monitor *alert.Monitor) {
-	a.svc.runAlerts(ctx, monitor, a.clock.timeNow())
+func (a *alertFixture) tick(ctx context.Context, mons *monitors) {
+	a.svc.runAlerts(ctx, mons, a.clock.timeNow())
 }
 
-func (a *alertFixture) monitor() *alert.Monitor {
-	return alert.NewMonitor(a.svc.cfg.AlertAfter())
+func (a *alertFixture) monitor() *monitors {
+	return a.svc.newMonitors(a.svc.cfg.AlertAfter())
 }
 
 // TestAlertFiresAfterThreshold is the feature: a modem silent for the

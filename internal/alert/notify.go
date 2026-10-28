@@ -62,8 +62,10 @@ func (n *ChannelNotifier) Notify(ctx context.Context, ev Event) error {
 //
 // An alert dropped because the network was briefly unreachable is exactly the
 // alert that mattered, so a failed send is retried on the next flush. At most
-// one event per subject is kept: an operator needs the subject's current state,
-// not a backlog, so a newer event replaces an older undelivered one.
+// one event per subject and topic is kept: an operator needs the current state
+// of each condition, not a backlog, so a newer event replaces an older
+// undelivered one about the same thing -- and only about the same thing, or a
+// modem's two independent problems would take turns erasing each other.
 type Dispatcher struct {
 	notifier Notifier
 	log      func(format string, args ...any)
@@ -85,7 +87,7 @@ func NewDispatcher(notifier Notifier, log func(string, ...any)) *Dispatcher {
 }
 
 // Enqueue queues events for delivery, superseding anything still undelivered
-// for the same subject.
+// about the same subject and topic.
 func (d *Dispatcher) Enqueue(events ...Event) {
 	if d == nil || len(events) == 0 {
 		return
@@ -93,7 +95,7 @@ func (d *Dispatcher) Enqueue(events ...Event) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, ev := range events {
-		d.pending[ev.Subject] = ev
+		d.pending[ev.Key()] = ev
 	}
 }
 
@@ -104,14 +106,14 @@ func (d *Dispatcher) Flush(ctx context.Context) {
 		return
 	}
 	d.mu.Lock()
-	subjects := make([]string, 0, len(d.pending))
-	for subject := range d.pending {
-		subjects = append(subjects, subject)
+	keys := make([]string, 0, len(d.pending))
+	for key := range d.pending {
+		keys = append(keys, key)
 	}
-	sort.Strings(subjects)
-	batch := make([]Event, 0, len(subjects))
-	for _, subject := range subjects {
-		batch = append(batch, d.pending[subject])
+	sort.Strings(keys)
+	batch := make([]Event, 0, len(keys))
+	for _, key := range keys {
+		batch = append(batch, d.pending[key])
 	}
 	d.mu.Unlock()
 
@@ -120,15 +122,17 @@ func (d *Dispatcher) Flush(ctx context.Context) {
 			return
 		}
 		if err := d.notifier.Notify(ctx, ev); err != nil {
-			d.log("alert_failed subject=%s kind=%s error=%v (will retry)", ev.Subject, ev.Kind, err)
+			d.log("alert_failed subject=%s topic=%s kind=%s error=%v (will retry)",
+				ev.Subject, ev.Topic, ev.Kind, err)
 			continue
 		}
-		d.log("alert_sent subject=%s kind=%s silent=%s", ev.Subject, ev.Kind, round(ev.Silent))
+		d.log("alert_sent subject=%s topic=%s kind=%s silent=%s",
+			ev.Subject, ev.Topic, ev.Kind, round(ev.Silent))
 
 		d.mu.Lock()
 		// Only drop it if nothing newer arrived while the send was in flight.
-		if cur, ok := d.pending[ev.Subject]; ok && cur == ev {
-			delete(d.pending, ev.Subject)
+		if cur, ok := d.pending[ev.Key()]; ok && cur == ev {
+			delete(d.pending, ev.Key())
 		}
 		d.mu.Unlock()
 	}

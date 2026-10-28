@@ -8,6 +8,7 @@ import (
 
 	"github.com/legion/sms-gateway/internal/alert"
 	"github.com/legion/sms-gateway/internal/config"
+	"github.com/legion/sms-gateway/internal/modem"
 )
 
 // permanentError marks a failure that retrying cannot fix, such as a modem
@@ -105,10 +106,7 @@ func (s *Service) superviseHealth(ctx context.Context) {
 		return
 	}
 
-	var monitor *alert.Monitor
-	if s.deps.Alerts != nil {
-		monitor = alert.NewMonitor(alertAfter)
-	}
+	mons := s.newMonitors(alertAfter)
 
 	lastBeat := s.now()
 	for {
@@ -120,7 +118,7 @@ func (s *Service) superviseHealth(ctx context.Context) {
 		}
 		now := s.now()
 		s.checkStalls(now, stall)
-		s.runAlerts(ctx, monitor, now)
+		s.runAlerts(ctx, mons, now)
 		if heartbeat > 0 && now.Sub(lastBeat) >= heartbeat {
 			lastBeat = now
 			s.logHealth(now)
@@ -135,14 +133,41 @@ func halve(d time.Duration) time.Duration {
 	return d / 2
 }
 
+// monitors holds one Monitor per condition the daemon alerts on. Each keeps its
+// own per-subject state, so a second condition needs a second monitor rather
+// than a second pass over the first.
+type monitors struct {
+	polling *alert.Monitor
+	smsPath *alert.Monitor
+}
+
+// newMonitors returns nil when there is nowhere to send an alert, which is the
+// default. A condition whose alert is switched off leaves its monitor nil and
+// is simply not evaluated; the journal still records it.
+func (s *Service) newMonitors(after time.Duration) *monitors {
+	if s.deps.Alerts == nil {
+		return nil
+	}
+	m := &monitors{polling: alert.NewMonitor(after)}
+	if s.cfg.SMSPathAlerts() {
+		m.smsPath = alert.NewTopicMonitor(after, alert.TopicSMSPath)
+	}
+	return m
+}
+
 // runAlerts turns the current health into events and delivers them. Flush runs
 // on every tick, not only when there is something new, because that is also the
 // retry for an alert an earlier tick could not get out.
-func (s *Service) runAlerts(ctx context.Context, monitor *alert.Monitor, now time.Time) {
-	if monitor == nil || s.deps.Alerts == nil {
+func (s *Service) runAlerts(ctx context.Context, mons *monitors, now time.Time) {
+	if mons == nil || s.deps.Alerts == nil {
 		return
 	}
-	s.deps.Alerts.Enqueue(monitor.Evaluate(now, s.observations())...)
+	if mons.polling != nil {
+		s.deps.Alerts.Enqueue(mons.polling.Evaluate(now, s.observations())...)
+	}
+	if mons.smsPath != nil {
+		s.deps.Alerts.Enqueue(mons.smsPath.Evaluate(now, s.smsPathObservations())...)
+	}
 	s.deps.Alerts.Flush(ctx)
 }
 
@@ -195,7 +220,11 @@ func (s *Service) logHealth(now time.Time) {
 		if !h.lastPollOK.IsZero() {
 			last = now.Sub(h.lastPollOK).Truncate(time.Second).String()
 		}
-		s.deps.Log("modem_health modem=%s state=%s last_poll=%s polls=%d reconnects=%d",
-			name, state, last, h.polls, h.reconnects)
+		path := h.smsPath
+		if path == "" {
+			path = modem.SMSPathUnknown
+		}
+		s.deps.Log("modem_health modem=%s state=%s last_poll=%s polls=%d reconnects=%d sms_path=%s",
+			name, state, last, h.polls, h.reconnects, path)
 	}
 }

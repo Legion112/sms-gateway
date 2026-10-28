@@ -194,8 +194,10 @@ Requires `modems`, `channels`, `forward_rules`, and `storage.path` in config (se
 | `watch.reconnect_max` | Cap on the reconnect backoff; retried at this interval forever (default 60s) |
 | `watch.stall_timeout` | Report a connected modem that has not completed a poll in this long (default 5m) |
 | `watch.health_interval` | How often to log a `modem_health` heartbeat per modem (default 30m) |
-| `alerts.after` | Report a modem silent this long (default 5m) |
+| `watch.registration_interval` | How often to read each modem's per-domain registration (default 2m) |
+| `alerts.after` | Report a modem silent this long, or without a proven SMS path this long (default 5m) |
 | `alerts.channels` | Channels operational alerts go to; empty switches alerting off |
+| `alerts.sms_path` | Alert when a modem has no proven path for incoming SMS (default on) |
 | `modems.<name>.radio.scan_mode` | Technology the modem may use: `auto` (default), `gsm`, `wcdma`, `lte`, or `keep` to leave it as found |
 | `modems.<name>.radio.operator` | `auto` (default) lets the modem reselect its network; `keep` leaves a manual lock in place |
 
@@ -433,6 +435,10 @@ unreachable is a plausible reason the gateway is in trouble in the first place �
 and a queued alert is flushed on shutdown, so a restart does not swallow the
 alert explaining why the restart was needed.
 
+Alerts are keyed by modem *and topic*, so the two independent facts about one modem —
+it stopped polling, and it has no path for an SMS — are delivered separately instead of
+taking turns erasing each other in the retry queue.
+
 The decision and the delivery are separate on purpose. `internal/alert` decides
 (pure, no clock, no I/O, no Telegram) and `alert.Notifier` delivers. Today that
 is `ChannelNotifier`, writing to the forward channels named in
@@ -460,11 +466,15 @@ What that looks like in the journal:
 | `modem_up modem=X (reconnected)` | Port reopened and watching again |
 | `modem_stalled modem=X last_poll=…` | Port is open but no poll has completed in `stall_timeout` |
 | `modem_recovered modem=X` | Polling resumed after a stall |
-| `modem_health modem=X state=up last_poll=… polls=N reconnects=N` | Heartbeat, every `health_interval` |
+| `modem_health modem=X state=up last_poll=… polls=N reconnects=N sms_path=…` | Heartbeat, every `health_interval` |
 | `modem_abandoned modem=X` | Not retryable (unsupported driver); fix the config |
 | `modem_radio modem=X scan_mode=… operator=…` | Radio posture at connect; already correct, nothing written |
 | `modem_radio_corrected modem=X changed=…` | Modem was found in the wrong posture and put back |
 | `radio_posture_failed modem=X` | Posture could not be read or set; the modem keeps running as it is |
+| `modem_sms_path modem=X path=… cs=… ps=… ims=…` | Registration read; an SMS has a way in (`direct`, `ims`), or none could be judged (`unknown`) |
+| `modem_sms_path_lost modem=X path=unproven` | Attached for data with no circuit-switched or IMS registration |
+| `modem_sms_path_lost modem=X path=offline` | No domain is registered at all, while the modem still answers AT |
+| `registration_unreadable modem=X` | The registration queries stopped answering; logged once, not per interval |
 | `ingest_failed modem=X id=N` | One message could not be processed; the rest of the batch continued |
 | `channel_missing modem=X channel=Y` | A forward rule names a channel that is not configured |
 
@@ -529,6 +539,69 @@ modems:
 Correcting the posture is the watch daemon's job alone. `status` only reads: a command
 that reports on a modem must not rewrite its NV. The `mm` driver implements none of
 this, because ModemManager owns that decision for its modems.
+
+### Watching for the condition, not only its cause
+
+The posture correction prevents one known cause. The same silence arrives by other
+routes, with the configuration perfectly correct the whole time:
+
+- there is only LTE coverage where the gateway sits, so `auto` has nothing else to pick;
+- the visited network drops the circuit-switched registration and keeps the data one;
+- **the operator switches 3G off** — MTS is retiring 3G from the end of 2026, which
+  turns this from a hypothetical into a date.
+
+So the daemon also watches the symptom. Every `watch.registration_interval`, between SMS
+polls and on the goroutine that owns the AT port, it reads each domain separately and
+judges what an incoming SMS could do with the result:
+
+| `path` | Registration | Meaning |
+|--------|--------------|---------|
+| `direct` | circuit-switched registered | SMS arrive over it; nothing else has to cooperate |
+| `ims` | no CS, IMS registered | SMS arrive over IP |
+| `unproven` | data registered, no CS, no IMS | **the dangerous one**: healthy everywhere else, and an SMS only arrives if the visited network bridges it over SGs |
+| `offline` | nothing registered | cannot receive, while the modem still answers AT and polls fine |
+| `unknown` | mid-reselection, or nothing answered | no verdict — never alerted on |
+
+A sustained `unproven` or `offline` is reported after `alerts.after`, once, with the
+registration that produced it:
+
+```
+sms-gateway PROBLEM
+modem ec25-backup has had no proven path for incoming SMS for 7m0s
+cs=not registered ps=registered (roaming) ims=unsupported
+
+Nothing else reports a fault: the modem answers and its polls succeed.
+```
+
+The wording is deliberate. No *proven* path is not proof of no path: a network really
+carrying SMS over SGs for a roaming SIM would read the same way, so this alert says what
+was observed and no more. That is also why `alerts.sms_path: false` exists — it silences
+this one alert and leaves the journal lines, which still record every change.
+
+Three choices keep it from crying wolf:
+
+- `unknown` never alerts. A modem searching for a network is in that state on every
+  reselection, and an alarm raised on missing information is an alarm operators learn
+  to ignore.
+- A disconnected modem is skipped entirely. That outage already has the polling alert,
+  and reporting one fault twice teaches an operator that one of the two is noise.
+- A reconnect restarts the grace period, because registration takes a moment to come up
+  after the port does.
+
+`status` reports the same thing without alerting, per domain:
+
+```
+cs_registration: not registered
+ps_registration: registered (roaming)
+ims_registration: unsupported
+sms_path: unproven
+warning: attached for data with no circuit-switched or IMS registration; incoming SMS depend on the network carrying them over SGs
+```
+
+One known limitation: firmware that does not implement `AT+CIREG?` reports
+`ims=unsupported`, and that counts as no IMS path. A module that cannot report an IMS
+registration is not one to bet an SMS on, but on such firmware an IMS-only setup would
+read as `unproven`.
 
 ## Project layout
 

@@ -8,9 +8,9 @@ import (
 
 var (
 	cpinRe         = regexp.MustCompile(`\+CPIN:\s*(\S+)`)
-	cregRe         = regexp.MustCompile(`\+CREG:\s*\d+,(\d+)`)
-	cgregRe        = regexp.MustCompile(`\+CGREG:\s*\d+,(\d+)`)
-	ceregRe        = regexp.MustCompile(`\+CEREG:\s*\d+,(\d+)`)
+	cregRe         = regexp.MustCompile(`\+CREG:\s*\d+,\s*(\d+)`)
+	cgregRe        = regexp.MustCompile(`\+CGREG:\s*\d+,\s*(\d+)`)
+	ceregRe        = regexp.MustCompile(`\+CEREG:\s*\d+,\s*(\d+)`)
 	cnumRe         = regexp.MustCompile(`\+CNUM:\s*"[^"]*"\s*,\s*"([^"]*)"`)
 	cusdRe         = regexp.MustCompile(`\+CUSD:\s*\d+,"([^"]*)"`)
 	phoneRe        = regexp.MustCompile(`\+[1-9]\d{6,14}`)

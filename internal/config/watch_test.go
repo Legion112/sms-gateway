@@ -137,6 +137,7 @@ func TestLivenessDefaults(t *testing.T) {
 		{"reconnect_max", cfg.ReconnectMax(), 60 * time.Second},
 		{"stall_timeout", cfg.StallTimeout(), 5 * time.Minute},
 		{"health_interval", cfg.HealthInterval(), 30 * time.Minute},
+		{"registration_interval", cfg.RegistrationInterval(), 2 * time.Minute},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s default = %s want %s", tc.name, tc.got, tc.want)
@@ -149,6 +150,7 @@ func TestLivenessSettingsLoad(t *testing.T) {
   reconnect_max: 2m
   stall_timeout: 90s
   health_interval: 10m
+  registration_interval: 30s
 `)
 	cfg, err := config.Load(config.Overrides{ConfigPath: path})
 	if err != nil {
@@ -163,6 +165,7 @@ func TestLivenessSettingsLoad(t *testing.T) {
 		{"reconnect_max", cfg.ReconnectMax(), 2 * time.Minute},
 		{"stall_timeout", cfg.StallTimeout(), 90 * time.Second},
 		{"health_interval", cfg.HealthInterval(), 10 * time.Minute},
+		{"registration_interval", cfg.RegistrationInterval(), 30 * time.Second},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("%s = %s want %s", tc.name, tc.got, tc.want)
@@ -192,6 +195,8 @@ func TestLivenessSettingsRejectBadValues(t *testing.T) {
 	}{
 		{"unparseable", "  reconnect_initial: soon\n"},
 		{"negative", "  stall_timeout: -5m\n"},
+		{"unparseable registration interval", "  registration_interval: often\n"},
+		{"negative registration interval", "  registration_interval: -2m\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := config.Load(config.Overrides{ConfigPath: writeWatchConfig(t, tc.lines)})
@@ -212,6 +217,47 @@ func TestAlertsDefaults(t *testing.T) {
 	}
 	if cfg.AlertsEnabled() {
 		t.Error("alerting should be off when no channels are listed")
+	}
+	// On by default: the condition it reports is invisible everywhere else, so
+	// an operator who configured alerts at all should hear about it.
+	if !cfg.SMSPathAlerts() {
+		t.Error("alerts.sms_path should default to on")
+	}
+}
+
+// The sms_path switch silences one alert without touching the other, and
+// leaving it out is not the same as setting it to false.
+func TestSMSPathAlertSwitch(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		lines string
+		want  bool
+	}{
+		{"absent", "alerts:\n  channels: [tg]\n", true},
+		{"explicitly on", "alerts:\n  channels: [tg]\n  sms_path: true\n", true},
+		{"off", "alerts:\n  channels: [tg]\n  sms_path: false\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeWatchConfig(t, "")
+			content, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			content = append(content, []byte("\n"+tc.lines)...)
+			if err := os.WriteFile(path, content, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.Load(config.Overrides{ConfigPath: path})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := cfg.SMSPathAlerts(); got != tc.want {
+				t.Errorf("SMSPathAlerts() = %v, want %v", got, tc.want)
+			}
+			if !cfg.AlertsEnabled() {
+				t.Error("the sms_path switch must not affect whether alerting is on")
+			}
+		})
 	}
 }
 
@@ -271,5 +317,44 @@ func TestAlertsRejectNegativeAfter(t *testing.T) {
 	}
 	if _, err := config.Load(config.Overrides{ConfigPath: path}); err == nil {
 		t.Fatal("expected a negative alerts.after to fail")
+	}
+}
+
+// TestExampleConfigLoads keeps the documented example honest. It is the first
+// thing an operator copies, so a key that no longer parses, or a default the
+// comments describe wrongly, is a working config turned into a broken one.
+func TestExampleConfigLoads(t *testing.T) {
+	// The example deliberately keeps every bot token out of the file.
+	for _, env := range []string{
+		"SMS_GATEWAY_CHANNEL_MY_TELEGRAM_BOT_TOKEN",
+		"SMS_GATEWAY_CHANNEL_VIKA_TELEGRAM_BOT_TOKEN",
+	} {
+		t.Setenv(env, "123456:test-token")
+	}
+
+	cfg, err := config.Load(config.Overrides{ConfigPath: filepath.Join("..", "..", "config.example.yaml")})
+	if err != nil {
+		t.Fatalf("config.example.yaml does not load: %v", err)
+	}
+	if err := config.ValidateWatch(cfg); err != nil {
+		t.Fatalf("config.example.yaml is not a valid watch config: %v", err)
+	}
+	for _, tc := range []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{"registration_interval", cfg.RegistrationInterval(), 2 * time.Minute},
+		{"alerts.after", cfg.AlertAfter(), 5 * time.Minute},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %s, want the documented %s", tc.name, tc.got, tc.want)
+		}
+	}
+	if !cfg.SMSPathAlerts() {
+		t.Error("the example sets alerts.sms_path: true but it did not take effect")
+	}
+	if !cfg.AlertsEnabled() {
+		t.Error("the example configures alert channels but alerting reads as off")
 	}
 }

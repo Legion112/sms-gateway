@@ -125,6 +125,10 @@ watch:
   # Heartbeat so the journal carries positive proof that reception is alive
   # rather than only ever showing failures.
   health_interval: 30m
+  # How often to read each modem's registration domain by domain, which is the
+  # only way to see a modem that is attached for data while an incoming SMS has
+  # no way in. Read between SMS polls, on the goroutine that owns the AT port.
+  registration_interval: 2m
 
 # --- Operational alerts (about the gateway itself, not received SMS) ---
 #
@@ -138,3 +142,10 @@ watch:
 alerts:
   after: 5m
   channels: [my-telegram]
+  # Alert when a modem has been attached for `after` with no circuit-switched
+  # and no IMS registration, which is the one state where everything else looks
+  # healthy and an SMS may still have nowhere to arrive. Set to false to keep
+  # the journal lines without the alert: a network that really does carry SMS
+  # over SGs for a roaming SIM reads the same way, so this can fire on a modem
+  # that is in fact fine.
+  sms_path: true

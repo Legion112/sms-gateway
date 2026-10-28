@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"time"
+
+	"github.com/legion/sms-gateway/internal/modem"
 )
 
 // modemHealth is the liveness record for one modem. It answers the only question
@@ -15,6 +17,21 @@ type modemHealth struct {
 	lastErr    error
 	polls      int
 	reconnects int
+
+	// registration is the last per-domain reading, and smsPath the verdict it
+	// implies. smsPath is empty until the first successful read.
+	registration modem.Registration
+	smsPath      modem.SMSPath
+	// lastSMSPathOK is when an SMS was last known to have a way in. It is set
+	// at connect as well as by a good reading, so the grace period before an
+	// alert is measured from this connection rather than from a reading that
+	// predates an outage.
+	lastSMSPathOK time.Time
+	// lastRegCheck paces the reads; regReadFailed records whether the last one
+	// errored, so a modem that cannot answer is logged on the edge instead of
+	// on every interval.
+	lastRegCheck  time.Time
+	regReadFailed bool
 }
 
 func (s *Service) healthFor(modemName string) *modemHealth {
@@ -36,6 +53,12 @@ func (s *Service) markModemUp(modemName string) {
 	reconnected := h.reconnects > 0 && !h.connected
 	h.connected = true
 	h.lastErr = nil
+	// A fresh connection starts the SMS-path clock over. Registration takes a
+	// moment to come up after the port does, and measuring from a reading taken
+	// before the outage would alert on the reconnect itself.
+	h.lastSMSPathOK = s.now()
+	h.smsPath = ""
+	h.lastRegCheck = time.Time{}
 	s.healthMu.Unlock()
 
 	if reconnected {

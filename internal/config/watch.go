@@ -20,6 +20,7 @@ type WatchConfig struct {
 	ReconnectMax          time.Duration `yaml:"-"`
 	StallTimeout          time.Duration `yaml:"-"`
 	HealthInterval        time.Duration `yaml:"-"`
+	RegistrationInterval  time.Duration `yaml:"-"`
 }
 
 type watchFile struct {
@@ -35,6 +36,7 @@ type watchFile struct {
 		ReconnectMax          string `yaml:"reconnect_max"`
 		StallTimeout          string `yaml:"stall_timeout"`
 		HealthInterval        string `yaml:"health_interval"`
+		RegistrationInterval  string `yaml:"registration_interval"`
 	} `yaml:"watch"`
 }
 
@@ -55,6 +57,7 @@ func applyWatchFile(file *watchFile, cfg *Config) error {
 		{"reconnect_max", file.Watch.ReconnectMax, &cfg.Watch.ReconnectMax},
 		{"stall_timeout", file.Watch.StallTimeout, &cfg.Watch.StallTimeout},
 		{"health_interval", file.Watch.HealthInterval, &cfg.Watch.HealthInterval},
+		{"registration_interval", file.Watch.RegistrationInterval, &cfg.Watch.RegistrationInterval},
 	} {
 		if d.raw == "" {
 			continue
@@ -160,4 +163,22 @@ func (cfg Config) HealthInterval() time.Duration {
 		return cfg.Watch.HealthInterval
 	}
 	return 30 * time.Minute
+}
+
+// RegistrationInterval is how often a connected modem's per-domain registration
+// is read, with default 2m when unset. It is a cadence, not a switch: the read
+// always happens, and alerts.sms_path is what decides whether its verdict wakes
+// anybody.
+//
+// This is a poll rather than an event because the condition it looks for is a
+// non-event: a modem drops its circuit-switched registration and reports
+// nothing, keeps answering AT and keeps its data attach. The read costs four AT
+// commands and runs between SMS polls on the goroutine that owns the port, so
+// the interval trades how fast that is noticed against how much of the port's
+// time is spent not looking for messages.
+func (cfg Config) RegistrationInterval() time.Duration {
+	if cfg.Watch.RegistrationInterval > 0 {
+		return cfg.Watch.RegistrationInterval
+	}
+	return 2 * time.Minute
 }

@@ -146,6 +146,9 @@ func (s *Service) runModem(ctx context.Context, modemName string, entry config.M
 			return err
 		}
 		s.markPollOK(modemName, s.now())
+		// After the messages, on the goroutine that owns the port, and rate
+		// limited inside: a poll must never wait on a diagnostic.
+		s.checkRegistration(ctx, modemName, m)
 		return nil
 	}
 

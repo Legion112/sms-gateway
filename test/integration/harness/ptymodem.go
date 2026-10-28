@@ -45,6 +45,17 @@ type SerialModem struct {
 	// as a real modem's NV does across a USB re-enumeration.
 	scanMode int
 	copsMode int
+
+	// creg, cgreg and cereg are the <stat> each registration query reports,
+	// and ims the <reg_info> of +CIREG. They start where a modem on 2G/3G at
+	// home does: circuit-switched and GPRS attached, no LTE, no IMS.
+	creg  int
+	cgreg int
+	cereg int
+	ims   int
+	// imsSupported false makes +CIREG? answer ERROR, as firmware without the
+	// command does.
+	imsSupported bool
 }
 
 var (
@@ -54,9 +65,25 @@ var (
 	copsSetRe  = regexp.MustCompile(`^AT\+COPS=(\d+)`)
 )
 
+// Registration <stat> values, as 3GPP numbers them.
+const (
+	RegNotRegistered = 0
+	RegHome          = 1
+	RegSearching     = 2
+	RegDenied        = 3
+	RegRoaming       = 5
+)
+
 // NewSerialModem creates the pty and the device node, and starts answering AT.
 func NewSerialModem(link string) (*SerialModem, error) {
-	m := &SerialModem{link: link, messages: map[int]string{}}
+	m := &SerialModem{
+		link:         link,
+		messages:     map[int]string{},
+		creg:         RegHome,
+		cgreg:        RegHome,
+		cereg:        RegNotRegistered,
+		imsSupported: true,
+	}
 	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
 		return nil, err
 	}
@@ -191,6 +218,26 @@ func (m *SerialModem) Radio() (scanMode, copsMode int) {
 	return m.scanMode, m.copsMode
 }
 
+// SetRegistration sets what each domain reports. The circuit-switched and
+// packet-switched stats are the 3GPP <stat> values; ims is the +CIREG
+// <reg_info>, 1 for an IMS registration.
+func (m *SerialModem) SetRegistration(creg, cgreg, cereg, ims int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.creg = creg
+	m.cgreg = cgreg
+	m.cereg = cereg
+	m.ims = ims
+}
+
+// SetIMSSupported controls whether +CIREG? is answered at all, standing in for
+// firmware that does not implement it.
+func (m *SerialModem) SetIMSSupported(supported bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.imsSupported = supported
+}
+
 // Commands returns every AT command the modem has been sent.
 func (m *SerialModem) Commands() []string {
 	m.mu.Lock()
@@ -275,11 +322,13 @@ func (m *SerialModem) respond(cmd string) string {
 	case cmd == "AT+CSQ":
 		return ok("+CSQ: 25,99")
 	case cmd == "AT+CREG?":
-		return ok(`+CREG: 2,1,"10B5","BDBB208",7`)
+		return ok(m.regReport("+CREG", 7, m.statFor("+CREG")))
 	case cmd == "AT+CGREG?":
-		return ok(`+CGREG: 2,1,"10B5","BDBB208",7`)
+		return ok(m.regReport("+CGREG", 2, m.statFor("+CGREG")))
 	case cmd == "AT+CEREG?":
-		return ok(`+CEREG: 2,1,"10B5","BDBB208",7`)
+		return ok(m.regReport("+CEREG", 7, m.statFor("+CEREG")))
+	case cmd == "AT+CIREG?":
+		return m.ciregReport(ok)
 	case cmd == "AT+QCCID", cmd == "AT+CCID":
 		return ok("+QCCID: 8999801234567890123")
 	case cmd == "AT+CIMI":
@@ -293,6 +342,40 @@ func (m *SerialModem) respond(cmd string) string {
 	default:
 		return "\r\nERROR\r\n"
 	}
+}
+
+func (m *SerialModem) statFor(prefix string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	switch prefix {
+	case "+CREG":
+		return m.creg
+	case "+CGREG":
+		return m.cgreg
+	default:
+		return m.cereg
+	}
+}
+
+// regReport mirrors the real modem: a registered domain names the cell it is on
+// and the access technology it is on it with, an unregistered one reports the
+// mode and stat alone.
+func (m *SerialModem) regReport(prefix string, act, stat int) string {
+	if stat == RegHome || stat == RegRoaming {
+		return fmt.Sprintf(`%s: 2,%d,"10B5","BDBB208",%d`, prefix, stat, act)
+	}
+	return fmt.Sprintf("%s: 2,%d", prefix, stat)
+}
+
+func (m *SerialModem) ciregReport(ok func(...string) string) string {
+	m.mu.Lock()
+	supported := m.imsSupported
+	ims := m.ims
+	m.mu.Unlock()
+	if !supported {
+		return "\r\nERROR\r\n"
+	}
+	return ok(fmt.Sprintf("+CIREG: 1,%d", ims))
 }
 
 // setScanMode answers AT+QCFG="nwscanmode",<mode>[,<effect>]. A real EC25

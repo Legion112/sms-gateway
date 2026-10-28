@@ -17,17 +17,23 @@ type AlertsConfig struct {
 	// Channels names the forward channels alerts are sent to. Empty switches
 	// alerting off.
 	Channels []string `yaml:"channels"`
+	// SMSPath enables the alert for a modem that is attached but has no proven
+	// path for an incoming SMS. It defaults to on; see Config.SMSPathAlerts
+	// for why it can be turned off on its own.
+	SMSPath *bool `yaml:"-"`
 }
 
 type alertsFile struct {
 	Alerts struct {
 		After    string   `yaml:"after"`
 		Channels []string `yaml:"channels"`
+		SMSPath  *bool    `yaml:"sms_path"`
 	} `yaml:"alerts"`
 }
 
 func applyAlertsFile(file *alertsFile, cfg *Config) error {
 	cfg.Alerts.Channels = file.Alerts.Channels
+	cfg.Alerts.SMSPath = file.Alerts.SMSPath
 	if file.Alerts.After == "" {
 		return nil
 	}
@@ -49,6 +55,18 @@ func (cfg Config) AlertAfter() time.Duration {
 		return cfg.Alerts.After
 	}
 	return 5 * time.Minute
+}
+
+// SMSPathAlerts reports whether a modem with no proven SMS path is alerted on,
+// defaulting to true when the key is absent.
+//
+// It has its own switch because it is the one alert here that can fire on a
+// modem that is in fact fine: a network really carrying SMS over SGs for a
+// roaming SIM would be reported as having a problem it does not have. Turning it off leaves the
+// journal lines, which still record every change, so the condition stays
+// visible to anyone looking without anyone being woken for it.
+func (cfg Config) SMSPathAlerts() bool {
+	return cfg.Alerts.SMSPath == nil || *cfg.Alerts.SMSPath
 }
 
 // AlertsEnabled reports whether anywhere is configured to receive alerts.

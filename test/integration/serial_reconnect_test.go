@@ -111,6 +111,10 @@ type labOptions struct {
 	// opens it, which is the only window in which a starting posture can be
 	// set without racing the correction under test.
 	before func(*harness.SerialModem)
+	// registrationInterval paces the per-domain registration read. The lab
+	// runs it far faster than production so a change made mid-test is picked
+	// up within a poll or two.
+	registrationInterval time.Duration
 }
 
 // startLab brings up the fake modem and the real watch service against it.
@@ -152,6 +156,10 @@ func startLabWith(t *testing.T, opts labOptions) *lab {
 	cfg.Watch.ReconnectInitial = 100 * time.Millisecond
 	cfg.Watch.ReconnectMax = 300 * time.Millisecond
 	cfg.Watch.DeleteAfterForward = opts.purge
+	cfg.Watch.RegistrationInterval = opts.registrationInterval
+	if cfg.Watch.RegistrationInterval == 0 {
+		cfg.Watch.RegistrationInterval = 50 * time.Millisecond
+	}
 
 	ch := &captureChannel{}
 	lg := &labLog{}

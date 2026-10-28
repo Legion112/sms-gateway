@@ -1,5 +1,5 @@
-// Package alert decides when a modem's silence is worth telling someone about,
-// and reports it when it recovers.
+// Package alert decides when something about a modem is worth telling someone
+// about, and reports it when it recovers.
 //
 // The decision and the delivery are deliberately separate. Deciding is pure:
 // Monitor holds no clock, performs no I/O and knows nothing about Telegram, so
@@ -19,24 +19,50 @@ import (
 type Kind string
 
 const (
-	// KindDown means the subject has been silent past the threshold.
+	// KindDown means the subject has been bad past the threshold.
 	KindDown Kind = "down"
 	// KindRecovered means a subject previously reported down is healthy again.
 	KindRecovered Kind = "recovered"
 )
 
+// Topic is what an event is about. Two topics are two independent facts about
+// the same modem: a modem can be polling perfectly while having no path for an
+// SMS to arrive through, so neither topic may be allowed to stand in for, or
+// supersede, the other.
+type Topic string
+
+const (
+	// TopicPolling is whether the modem is still completing polls at all.
+	TopicPolling Topic = "polling"
+	// TopicSMSPath is whether an incoming SMS has a proven way to reach the
+	// SIM, which a polling modem says nothing about.
+	TopicSMSPath Topic = "sms_path"
+)
+
 // Event is one thing an operator needs to know.
 type Event struct {
+	Topic   Topic
 	Kind    Kind
 	Subject string
 	At      time.Time
 	// Silent is how long the subject had gone without a sign of life: at the
 	// moment of the alert for KindDown, and in total for KindRecovered.
 	Silent time.Duration
+	// Detail is the observed state behind the event, carried through from the
+	// observation so the message says what is wrong and not only that
+	// something is.
+	Detail string
 }
+
+// Key identifies the condition this event reports on, which is the subject and
+// the topic together.
+func (e Event) Key() string { return e.Subject + "/" + string(e.Topic) }
 
 // Text is the operator-facing message, in the same plain style as a forwarded SMS.
 func (e Event) Text() string {
+	if e.Topic == TopicSMSPath {
+		return e.smsPathText()
+	}
 	switch e.Kind {
 	case KindDown:
 		return fmt.Sprintf(
@@ -46,6 +72,26 @@ func (e Event) Text() string {
 		return fmt.Sprintf(
 			"sms-gateway RECOVERED\nmodem %s is polling again after %s",
 			e.Subject, round(e.Silent))
+	default:
+		return fmt.Sprintf("sms-gateway: modem %s: %s", e.Subject, e.Kind)
+	}
+}
+
+// smsPathText deliberately claims less than the polling alert does. No proven
+// path means an SMS may still arrive, if the visited network carries it over
+// SGs; what is certain is that nothing here can show that it would, and that
+// no other signal the gateway produces would reveal it.
+func (e Event) smsPathText() string {
+	switch e.Kind {
+	case KindDown:
+		return fmt.Sprintf(
+			"sms-gateway PROBLEM\nmodem %s has had no proven path for incoming SMS for %s\n%s\n\n"+
+				"Nothing else reports a fault: the modem answers and its polls succeed.",
+			e.Subject, round(e.Silent), e.Detail)
+	case KindRecovered:
+		return fmt.Sprintf(
+			"sms-gateway RECOVERED\nmodem %s can receive SMS again after %s\n%s",
+			e.Subject, round(e.Silent), e.Detail)
 	default:
 		return fmt.Sprintf("sms-gateway: modem %s: %s", e.Subject, e.Kind)
 	}
@@ -65,6 +111,9 @@ type Observation struct {
 	// has never been seen healthy, which is the normal state at startup and
 	// must not count as an outage stretching back to the epoch.
 	LastOK time.Time
+	// Detail is the current observed state, carried into any event this
+	// observation produces. Optional: the polling topic has nothing to add.
+	Detail string
 }
 
 type subjectState struct {
@@ -82,12 +131,21 @@ type subjectState struct {
 // that it came back, not to be told every tick that it is still broken.
 type Monitor struct {
 	after time.Duration
+	topic Topic
 	state map[string]*subjectState
 }
 
 // NewMonitor reports a subject down once it has been silent for after.
 func NewMonitor(after time.Duration) *Monitor {
-	return &Monitor{after: after, state: make(map[string]*subjectState)}
+	return NewTopicMonitor(after, TopicPolling)
+}
+
+// NewTopicMonitor applies the same edge-triggered policy to another topic. The
+// policy is what matters and it does not change per topic: wait out the
+// threshold, report once, report the recovery once. A second condition needs
+// its own Monitor because each keeps per-subject state.
+func NewTopicMonitor(after time.Duration, topic Topic) *Monitor {
+	return &Monitor{after: after, topic: topic, state: make(map[string]*subjectState)}
 }
 
 // Evaluate records the observations and returns the events they imply, ordered
@@ -125,13 +183,14 @@ func (m *Monitor) Evaluate(now time.Time, obs []Observation) []Event {
 			st.alerted = true
 			st.alertedAt = healthySince
 			events = append(events, Event{
-				Kind: KindDown, Subject: o.Subject, At: now, Silent: silent,
+				Topic: m.topic, Kind: KindDown, Subject: o.Subject,
+				At: now, Silent: silent, Detail: o.Detail,
 			})
 		case st.alerted && silent < m.after:
 			st.alerted = false
 			events = append(events, Event{
-				Kind: KindRecovered, Subject: o.Subject, At: now,
-				Silent: now.Sub(st.alertedAt) - silent,
+				Topic: m.topic, Kind: KindRecovered, Subject: o.Subject, At: now,
+				Silent: now.Sub(st.alertedAt) - silent, Detail: o.Detail,
 			})
 		}
 	}
