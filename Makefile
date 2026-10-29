@@ -1,7 +1,7 @@
-.PHONY: build clean test test-integration vet deploy_pi deploy-tunnel deploy-watch install-tunnel-service install-watch-service install-watch-pi
+.PHONY: build clean test test-integration vet scan scan-history hooks deploy_pi deploy-tunnel deploy-watch install-tunnel-service install-watch-service install-watch-pi
 
 BIN_DIR := bin
-BINS := sms-gateway sms-gateway-watch
+BINS := sms-gateway sms-gateway-watch sms-gateway-scan
 GO_SRC := $(shell find cmd internal -name '*.go') go.mod go.sum
 
 PI_HOST ?= first_pi
@@ -26,6 +26,23 @@ test:
 # deliberately not part of `make test`.
 test-integration:
 	go test -tags=integration -count=1 -timeout 5m ./test/integration/...
+
+# This repository is public and its fixtures come from real SMS, so a SIM
+# serial, a subscriber number, a card tail or a balance can reach a commit just
+# by being the easiest way to write a meaningful test. `scan` checks the working
+# tree; `scan-history` checks every blob in every ref, which is the one that
+# tells you whether an old commit is still carrying something.
+scan: build
+	$(BIN_DIR)/sms-gateway-scan
+
+scan-history: build
+	$(BIN_DIR)/sms-gateway-scan -history
+
+# Installs the scanner as this clone's pre-commit and pre-push hooks. Git does
+# not clone hooks, so this is per-checkout and has to be run again after a
+# fresh clone.
+hooks: build
+	$(BIN_DIR)/sms-gateway-scan -install-hooks
 
 # Both invocations: the default one does not vet the integration-tagged files,
 # which is where the lab lives.

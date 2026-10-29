@@ -55,6 +55,35 @@ jobs:
           GOARCH: arm64
         run: go build ./cmd/...
 
+  # The hooks this scanner installs are local to a clone and `--no-verify`
+  # skips them, so this job is the only copy of the check that cannot be
+  # bypassed or go stale. It runs from source rather than a built binary for
+  # the same reason.
+  leak:
+    name: leak scan
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 because -history walks every commit. The default
+      # single-commit checkout would scan the tip and call the repository
+      # clean while an older commit still carried an identifier.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Two passes with different reach. The tree pass is the one whose
+      # failure names a file somebody can edit; the history pass is the one
+      # that notices an identifier surviving in a commit nobody is looking at.
+      - name: Scan the working tree
+        run: go run ./cmd/sms-gateway-scan
+
+      - name: Scan every blob in history
+        run: go run ./cmd/sms-gateway-scan -history
+
   lab:
     name: serial lab
     runs-on: ubuntu-latest

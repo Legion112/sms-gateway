@@ -671,14 +671,88 @@ internal/storage/         SQLite message and delivery store
 internal/watch/           Watch daemon orchestration
 internal/alert/           Modem outage policy and alert delivery
 internal/state/           What the daemon publishes for the CLI to read
+internal/secretscan/      Leak rules and the reserved placeholder values
 cmd/sms-gateway-watch/    Watch daemon binary
+cmd/sms-gateway-scan/     Leak scanner, also installed as the git hooks
 config.example.yaml       Example configuration
 deploy/env.pi.example     Pi env file template (bot token)
 deploy/systemd/           systemd units (watch daemon, SSH tunnel)
 deploy/udev/              Optional udev rules for serial driver
 test/integration/         Serial lab: real driver against a pseudo-terminal
-.github/workflows/ci.yml  CI: gofmt, build, vet, race tests, arm64 cross-build, lab
+.github/workflows/ci.yml  CI: gofmt, build, vet, race tests, arm64 cross-build, lab, leak scan
 ```
+
+### Keeping real identifiers out of a public repository
+
+This repository is public, and its most useful fixtures are real: the wording
+operators and banks actually send, the ICCID a modem actually reports. That is
+also how a subscriber number, a SIM serial, a card tail and an account balance
+once ended up published here. The leak was not carelessness — pasting a stored
+message into a test is simply the shortest path to a test that means something
+— so it is blocked mechanically instead of remembered.
+
+```bash
+make hooks          # install the pre-commit and pre-push hooks in this clone
+make scan           # scan the working tree
+make scan-history   # scan every blob in every ref
+```
+
+`cmd/sms-gateway-scan` is both the command and the hook. Git runs whatever
+executable sits at `.git/hooks/pre-commit`, and nothing requires that to be a
+shell script, so `make hooks` installs copies of the compiled binary under the
+hook names and it dispatches on the name it was invoked as.
+
+It works by shape, not by a list of known-bad values: a rule matches the
+*shape* of an identifier — an ICCID is `89` followed by sixteen to eighteen
+digits — and then asks whether that particular value is one of the reserved
+placeholders. Anything shaped like an identifier that is not reserved is a
+finding. That is what lets it catch a number nobody has ever seen before on its
+first commit, which no denylist could.
+
+**The reserved placeholders** are the values fixtures are meant to use. They
+are valid in shape and bound to nothing — no SIM, no line, no card, no account:
+
+```bash
+sms-gateway-scan -reserved
+```
+
+| Kind | Reserved for fixtures |
+| --- | --- |
+| ICCID | `8999801234567890123`, `8999809876543210987`, `8999809999999999999`, `8970199000000000001` |
+| MSISDN | `+998901234567`, `+998909876543` |
+| IMEI | `350000000000001`, `860000000000001` |
+| Card tail | `*1001`, `***0001`, `***0002`, `*0003`, `***0004` |
+| Balance | `12345.67890`, `11111.11111`, `99999.99999`, `100000.00`, `90000.00`, `50000.00`, `25000.00`, `4000.00` |
+| One-time code | `0000`, `1000`, `1234`, `111111`, `000000`, `123456`, `100001`–`100004` |
+| Private address | `192.168.1.1`, `10.0.0.1`, `10.0.0.2`, `10.0.0.9` |
+
+For network examples prefer the RFC 5737 documentation ranges
+(`192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`), which are not flagged at
+all and so need no reservation.
+
+Adding to that table is how the list stays trustworthy or stops being so. A
+value goes in once somebody has checked it is not real. **A real identifier is
+never added to make a commit pass** — it is still real after it has been
+allowed. If the shape is a genuine false alarm, waive the single line and say
+why, so the argument survives in the diff:
+
+```go
+Tel: 1851 // secretscan:allow operator hotline, published on their website
+```
+
+The waiver requires a reason; a bare marker is ignored.
+
+What the rules deliberately leave alone: round amounts with a single decimal
+(`10000.0` is what a top-up looks like and identifies nobody, while
+`12345.67890` has the shape of a running balance, which identifies an account
+over time), and
+the language-marker vocabulary in `internal/translate/markers.go`, where
+`"podtverjdeniya": 3` is a weight rather than a code.
+
+Two limits worth knowing. Git does not clone hooks, so a fresh clone needs
+`make hooks` again, and `git commit --no-verify` skips them — which is why the
+same scanner runs in CI, where it is the copy that can be neither bypassed nor
+left stale. And a scanner is a net, not a proof: it catches shapes it knows.
 
 ### The serial lab
 
