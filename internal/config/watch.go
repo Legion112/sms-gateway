@@ -104,6 +104,9 @@ func ValidateWatch(cfg Config) error {
 	if err := ValidateAlerts(cfg); err != nil {
 		return err
 	}
+	if err := ValidateTranslate(cfg); err != nil {
+		return err
+	}
 
 	for chName := range seen {
 		ch, ok := cfg.Channels[chName]

@@ -11,6 +11,11 @@ const (
 	ExitOK    = 0
 	ExitModem = 1
 	ExitSetup = 2
+
+	// ExitDependency is the code for a service the command needs that failed
+	// rather than was misconfigured. It shares a value with ExitModem, which
+	// was the only such dependency when these codes were written.
+	ExitDependency = ExitModem
 )
 
 // CLIError carries an exit code for Cobra command handlers.

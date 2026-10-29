@@ -23,6 +23,11 @@ func (a *telegramBotAdapter) Forward(ctx context.Context, msg InboundSMS) error 
 		ToICCID: msg.ToICCID,
 		Text:    msg.Text,
 		Time:    msg.Time,
+		Translation: telegrambot.Translation{
+			Text:   msg.Translation.Text,
+			Source: msg.Translation.Source,
+			Target: msg.Translation.Target,
+		},
 	})
 }
 func (a *telegramBotAdapter) SendText(ctx context.Context, text string) error {

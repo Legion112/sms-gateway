@@ -13,6 +13,7 @@ import (
 	"github.com/legion/sms-gateway/internal/config"
 	"github.com/legion/sms-gateway/internal/forward"
 	"github.com/legion/sms-gateway/internal/storage"
+	"github.com/legion/sms-gateway/internal/translate"
 	"github.com/legion/sms-gateway/internal/watch"
 )
 
@@ -52,6 +53,17 @@ func run() int {
 	}
 	defer closeChannels(channels)
 
+	translator, err := translate.FromConfig(cfg, log.Printf)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "translate: %v\n", err)
+		return 2
+	}
+	if translator == nil {
+		log.Printf("translate: off, messages are forwarded as received")
+	} else {
+		log.Printf("translate: %v -> %s via %s", cfg.TranslateSources(), translator.Target(), cfg.Translate.Endpoint)
+	}
+
 	router := forward.NewRouter(cfg.ForwardRules)
 	svc := watch.NewService(cfg, watch.Dependencies{
 		Store:    store,
@@ -59,6 +71,8 @@ func run() int {
 		Channels: channels,
 		Log:      log.Printf,
 		Alerts:   newAlertDispatcher(cfg, channels),
+
+		Translator: translator,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

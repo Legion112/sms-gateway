@@ -46,6 +46,7 @@ Forward channels (Telegram, email, SMS, …) implement `internal/forward.Channel
 | `send` | Send an SMS (`--number`, `--text`) |
 | `modems list` | List configured modems; `--discover` shows ModemManager indices |
 | `channel test` | Send a test message via a forward channel (e.g. Telegram) |
+| `translate` | Translate text through the configured local engine (checks setup without waiting for an SMS) |
 | `ports` | List detected serial ports |
 
 Global flags (all subcommands):
@@ -196,6 +197,13 @@ Requires `modems`, `channels`, `forward_rules`, and `storage.path` in config (se
 | `watch.health_interval` | How often to log a `modem_health` heartbeat per modem (default 30m) |
 | `watch.registration_interval` | How often to read each modem's per-domain registration (default 2m) |
 | `watch.state_path` | Where the daemon publishes its view for `status` to read (default `watch-state.json` beside `storage.path`) |
+| `translate.enabled` | Add a translation under each forwarded message (default off) |
+| `translate.endpoint` | A LibreTranslate-shaped service you run yourself; also `SMS_GATEWAY_TRANSLATE_ENDPOINT` |
+| `translate.api_key` | Shared secret for that service; also `SMS_GATEWAY_TRANSLATE_API_KEY` |
+| `translate.target` | Language to translate into (default `en`) |
+| `translate.sources` | Languages you cannot read, and so the only ones translated (default `[uz]`) |
+| `translate.timeout` | Budget for one translation, spent on the delivery path (default 10s) |
+| `translate.cache_size` | Recent translations remembered, since operator broadcasts repeat (default 256) |
 | `alerts.after` | Report a modem silent this long, or without a proven SMS path this long (default 5m) |
 | `alerts.channels` | Channels operational alerts go to; empty switches alerting off |
 | `alerts.sms_path` | Alert when a modem has no proven path for incoming SMS (default on) |
@@ -477,6 +485,9 @@ What that looks like in the journal:
 | `modem_sms_path_lost modem=X path=offline` | No domain is registered at all, while the modem still answers AT |
 | `state_unpublished path=X error=…` | The state file `status` reads could not be written; reported once, and reception is unaffected |
 | `state_published path=X (writable again)` | That write started working again |
+| `translated modem=X id=N uz->en engine=…` | A translation was attached; the languages only, never the body |
+| `translate_unavailable engine=X error=…` | The translation service failed; reported once, and the original is forwarded as normal |
+| `translate_available engine=X (answering again)` | It started answering again |
 | `registration_unreadable modem=X` | The registration queries stopped answering; logged once, not per interval |
 | `ingest_failed modem=X id=N` | One message could not be processed; the rest of the batch continued |
 | `channel_missing modem=X channel=Y` | A forward rule names a channel that is not configured |
@@ -654,6 +665,92 @@ Publishing cannot fail a poll: an unwritable state file is logged once as
 this, since ModemManager multiplexes its modems and `status` can open them while the
 daemon runs.
 
+## Translating what arrives
+
+These SIMs are Uzbek, and operator advisories, bank notices and government
+messages arrive in Uzbek. Switching `translate.enabled` on adds a reading of
+each one underneath the original:
+
+```
+SMS to +998901234567 (ec25-backup)
+from FVV
+26/10/29,18:05:00+00
+
+Xavfsiz xonadon - baxtli oila! Pech va dudburonlarni soz holatda saqlang. Is
+gazidan saqlanish qoidalariga amal qiling!
+
+translation (uz -> en):
+A safe home is a happy home. Keep the furnace and the chimney in order.
+```
+
+The original comes first and keeps every byte it needs. If the two together
+exceed Telegram's 4096 characters the translation is cut, and if there is no
+room to cut it to, it is dropped — a truncated translation is a nuisance, a
+truncated original is a lost message.
+
+### It never delays a message
+
+Translation sits on the path between a received SMS and its delivery, so
+everything that can go wrong there resolves to "no translation": an
+undetectable language, an engine that is off, unreachable, slow or broken. The
+engine runs on a machine that is allowed to be asleep. An outage is one journal
+line (`translate_unavailable`), reported once rather than per message, and
+another when it starts answering again.
+
+### Most of this traffic is deliberately left alone
+
+Roughly half of what these SIMs receive is Russian written in Latin letters:
+
+```
+U Vas ne spisalas' ejemesyachnaya abon. plata po tarifu "Status Silver"
+Demobank: data plateja 29 October 2026 08:25:33 summa 30.00 USD s karti ***0002
+```
+
+The recipient reads Russian, so translating these would add noise. Worse, the
+engine has to be *told* the source language — NLLB translates whatever it is
+given — and decoding the second line as Uzbek produces *"Capital Bank: data
+plateaus … sum of 30.00 USD s card"* wrapped around a real one-time code. So
+`internal/translate` identifies the language first, scoring Uzbek, Russian and
+English markers taken from this gateway's own stored traffic, and requires a
+margin before it commits. Three outcomes are left untranslated on purpose:
+
+- a language in neither `translate.sources` nor worth translating,
+- a body carrying **both** Uzbek and Russian, which the operators send often —
+  the Russian half already says it,
+- anything the markers do not settle, including concat fragments and
+  undecoded UCS2.
+
+Of 184 distinct stored bodies, 68 classify as Uzbek, 82 as Russian, 7 as
+English and 27 as undecided, and no bank or one-time-code message is read as
+Uzbek.
+
+### The translation can still be wrong
+
+It is a machine translation from a 600M-parameter model, and the original is
+kept precisely because of that. Measured on this gateway's own traffic, NLLB
+renders `is gazi` — carbon monoxide — as "heat gas", and the 1.3B model turns
+`25000.00 so'm` into `$25,000.00`, which is why `deploy/translate` defaults to
+the smaller one. It also drops trailing clauses when handed a whole message, so
+the appliance translates sentence by sentence; that recovered a one-time code
+and a phone number that were otherwise lost. Read amounts and codes off the
+original.
+
+### Running the engine
+
+`deploy/translate` is a container that serves NLLB-200 behind the
+LibreTranslate API, with the model baked in so it needs no network. Its README
+explains the model choice and why LibreTranslate's own Argos models cannot be
+used — their package index has no Uzbek in it at all. Anything else speaking
+that API can take its place.
+
+It must not run on the gateway's own Raspberry Pi 3, which has 905 MB of RAM;
+run it on a machine with room and let the Pi reach it over the LAN. Check it
+without waiting for an SMS:
+
+```bash
+sms-gateway translate "Is gazi - ko'rinmas xavf! Isitish pechlari va dudburonlarni tekshiring."
+```
+
 ## Project layout
 
 ```
@@ -671,11 +768,13 @@ internal/storage/         SQLite message and delivery store
 internal/watch/           Watch daemon orchestration
 internal/alert/           Modem outage policy and alert delivery
 internal/state/           What the daemon publishes for the CLI to read
+internal/translate/       Language detection and the local translation engine client
 cmd/sms-gateway-watch/    Watch daemon binary
 config.example.yaml       Example configuration
 deploy/env.pi.example     Pi env file template (bot token)
 deploy/systemd/           systemd units (watch daemon, SSH tunnel)
 deploy/udev/              Optional udev rules for serial driver
+deploy/translate/         Local NLLB translation appliance (container)
 test/integration/         Serial lab: real driver against a pseudo-terminal
 .github/workflows/ci.yml  CI: gofmt, build, vet, race tests, arm64 cross-build, lab
 ```

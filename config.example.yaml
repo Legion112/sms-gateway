@@ -153,3 +153,38 @@ alerts:
   # over SGs for a roaming SIM reads the same way, so this can fire on a modem
   # that is in fact fine.
   sms_path: true
+
+# --- Translating inbound SMS ---
+#
+# A reading of the message in a language you understand, added underneath the
+# original. The original is always forwarded unchanged: a machine translation of
+# a bank SMS can get a currency wrong, so it is an addition to the message and
+# never a replacement for it.
+#
+# The engine is a translation service you run yourself -- deploy/translate has
+# one -- because no message text is to reach a hosted API. It is reached over
+# HTTP, it is expected to be unreachable sometimes, and when it is, the message
+# is forwarded exactly as it would have been with this section absent.
+translate:
+  enabled: false
+  # Anything speaking the LibreTranslate API: POST /translate with q, source
+  # and target. The path is appended if you leave it off.
+  endpoint: http://192.0.2.10:5000
+  # Set this and the service's API_KEY to the same value if the service listens
+  # on a network shared with anything else. Also readable from
+  # SMS_GATEWAY_TRANSLATE_API_KEY, and the endpoint from
+  # SMS_GATEWAY_TRANSLATE_ENDPOINT, so neither has to live in this file.
+  #api_key: some-shared-secret
+  # What to translate into: en or ru.
+  target: en
+  # The languages you cannot read. This is a list rather than a switch because
+  # these SIMs receive more Russian than Uzbek, and translating a message you
+  # could already read adds a paragraph of noise to it. Messages in any other
+  # language, and messages carrying both, are forwarded untouched.
+  sources: [uz]
+  # Spent on the delivery path, so kept short: a translation that misses this
+  # budget is dropped rather than waited for.
+  timeout: 10s
+  # Operator broadcasts repeat verbatim and both modems receive them, so a
+  # small cache removes most of the engine's work.
+  cache_size: 256

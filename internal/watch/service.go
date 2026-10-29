@@ -18,6 +18,7 @@ import (
 	"github.com/legion/sms-gateway/internal/modem"
 	"github.com/legion/sms-gateway/internal/smsconcat"
 	"github.com/legion/sms-gateway/internal/storage"
+	"github.com/legion/sms-gateway/internal/translate"
 )
 
 // Dependencies are shared services for the watch daemon.
@@ -29,6 +30,10 @@ type Dependencies struct {
 	// Alerts reports modem outages to an operator. Nil switches alerting off,
 	// which is the default: a gateway with nowhere to send alerts still works.
 	Alerts *alert.Dispatcher
+	// Translator adds a reading of an inbound body in a language the recipient
+	// understands. Nil switches translation off, and so does an engine that is
+	// unreachable: both forward the original and nothing else.
+	Translator *translate.Translator
 }
 
 // Service runs the SMS watch and forward pipeline.
@@ -451,6 +456,11 @@ func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Messag
 		return nil
 	}
 
+	// After routing, so a message no channel wants costs no translation, and
+	// once for the message rather than once per channel, so two channels
+	// cannot ask the engine the same question twice.
+	s.translate(ctx, modemName, msg.ID, &inbound)
+
 	for _, chName := range channelNames {
 		need, err := s.deps.Store.NeedsDelivery(storageID, chName)
 		if err != nil {
@@ -483,6 +493,29 @@ func (s *Service) ingest(ctx context.Context, modemName string, msg modem.Messag
 	}
 
 	return s.purgeForwarded(ctx, modemName, msg.ID, storageID, del, slots)
+}
+
+// translate fills in inbound.Translation when there is one to be had.
+//
+// Its signature has no error in it on purpose: the message is received and
+// stored by this point, and nothing a translation engine does should be able to
+// delay or prevent the delivery of an SMS that has already arrived.
+func (s *Service) translate(ctx context.Context, modemName, msgID string, inbound *forward.InboundSMS) {
+	if s.deps.Translator == nil {
+		return
+	}
+	res, ok := s.deps.Translator.Annotate(ctx, inbound.Text)
+	if !ok {
+		return
+	}
+	inbound.Translation = forward.Translation{
+		Text:   res.Text,
+		Source: res.Source,
+		Target: res.Target,
+	}
+	// The languages but not the text: a body can carry a one-time code or a
+	// card number, and the journal is not where those belong.
+	s.deps.Log("translated modem=%s id=%s %s->%s engine=%s", modemName, msgID, res.Source, res.Target, res.Engine)
 }
 
 // slotDeleter returns the modem as a SlotDeleter when purging is enabled and the

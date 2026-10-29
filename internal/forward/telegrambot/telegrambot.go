@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/legion/sms-gateway/internal/config"
 )
@@ -20,6 +21,11 @@ const DriverName = "telegram_bot"
 const (
 	defaultAPIBase = "https://api.telegram.org"
 	maxMessageLen  = 4096
+
+	// minTranslationLen is the least room worth spending on a translation. A
+	// handful of characters of a sentence says nothing the original did not.
+	minTranslationLen = 24
+	ellipsis          = "..."
 )
 
 // Client calls the Telegram Bot API.
@@ -127,13 +133,24 @@ func (c *Channel) Close() error { return nil }
 
 // SMSMessage is the inbound SMS payload for formatting.
 type SMSMessage struct {
-	Modem   string
-	From    string
-	ToLine  string
-	ToICCID string
-	Text    string
-	Time    string
+	Modem       string
+	From        string
+	ToLine      string
+	ToICCID     string
+	Text        string
+	Time        string
+	Translation Translation
 }
+
+// Translation is machine-translated text shown under the original body.
+type Translation struct {
+	Text   string
+	Source string
+	Target string
+}
+
+// Present reports whether there is a translation to show.
+func (t Translation) Present() bool { return t.Text != "" }
 
 func formatMessage(msg SMSMessage) string {
 	var b strings.Builder
@@ -157,7 +174,49 @@ func formatMessage(msg SMSMessage) string {
 		b.WriteString("\n")
 		b.WriteString(msg.Text)
 	}
-	return b.String()
+	return appendTranslation(b.String(), msg.Translation)
+}
+
+// appendTranslation puts the translation below the original, inside whatever
+// room the original has left.
+//
+// The order and the budget are both deliberate. The original is what the
+// recipient checks a one-time code or an amount against, and a machine
+// translation of a bank SMS can get a currency wrong, so the original goes
+// first and keeps every byte it needs. If the translation does not fit, it is
+// cut, and if there is no room to cut it to, it is dropped: a truncated
+// translation is a nuisance, a truncated original is a lost message.
+func appendTranslation(body string, t Translation) string {
+	if !t.Present() {
+		return body
+	}
+	header := fmt.Sprintf("\n\ntranslation (%s -> %s):\n", t.Source, t.Target)
+	room := maxMessageLen - len(body) - len(header)
+	if room < minTranslationLen {
+		return body
+	}
+	text := t.Text
+	if len(text) > room {
+		text = truncateRunes(text, room-len(ellipsis)) + ellipsis
+	}
+	return body + header + text
+}
+
+// truncateRunes cuts to at most limit bytes without splitting a character.
+// Uzbek, Russian and the engine's own output are all multi-byte, and half a
+// rune reaches Telegram as a replacement character.
+func truncateRunes(s string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	if len(s) <= limit {
+		return s
+	}
+	cut := limit
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
 }
 
 // FormatMessageForTest exposes message formatting for unit tests.

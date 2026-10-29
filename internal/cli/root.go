@@ -36,4 +36,5 @@ func init() {
 	rootCmd.AddCommand(newPortsCmd())
 	rootCmd.AddCommand(newModemsCmd(&rootFlags))
 	rootCmd.AddCommand(newChannelCmd(&rootFlags))
+	rootCmd.AddCommand(newTranslateCmd(&rootFlags))
 }

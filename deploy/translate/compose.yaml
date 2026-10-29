@@ -1,0 +1,30 @@
+# Run the translation appliance on a machine the gateway can reach.
+#
+#   docker compose up -d --build
+#
+# The gateway host only needs to reach PORT over the local network; set
+# TRANSLATE_BIND to the interface that carries that network rather than leaving
+# the service on every one of them.
+services:
+  translate:
+    build:
+      context: .
+      args:
+        # nllb-200-distilled-1.3B is more fluent but renders so'm amounts as
+        # dollars, which is worse than clumsy on a bank SMS. See README.md.
+        MODEL: facebook/nllb-200-distilled-600M
+    image: sms-gateway-translate
+    container_name: sms-gateway-translate
+    restart: unless-stopped
+    ports:
+      - "${TRANSLATE_BIND:-127.0.0.1}:${TRANSLATE_PORT:-5000}:5000"
+    environment:
+      # Set this and the gateway's translate.api_key to the same value if the
+      # network the service listens on is shared with anything else.
+      API_KEY: "${TRANSLATE_API_KEY:-}"
+    # Nothing is written and nothing is read beyond the baked-in model.
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true

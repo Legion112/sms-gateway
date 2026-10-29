@@ -31,4 +31,19 @@ type InboundSMS struct {
 	ToICCID string // ICCID of receiving SIM (for debug when unmapped)
 	Text    string
 	Time    string // display timestamp
+	// Translation is a reading of Text in a language the recipient
+	// understands, when one was available. It is additive: the original is
+	// always forwarded, so an empty Translation is a normal outcome and not a
+	// degraded one.
+	Translation Translation
 }
+
+// Translation is machine-translated text accompanying an inbound SMS.
+type Translation struct {
+	Text   string // empty when there is no translation to show
+	Source string // the language the body was read as
+	Target string // the language Text is written in
+}
+
+// Present reports whether there is a translation to show.
+func (t Translation) Present() bool { return t.Text != "" }

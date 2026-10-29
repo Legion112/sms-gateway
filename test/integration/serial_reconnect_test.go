@@ -16,6 +16,7 @@ import (
 	"github.com/legion/sms-gateway/internal/config"
 	"github.com/legion/sms-gateway/internal/forward"
 	"github.com/legion/sms-gateway/internal/storage"
+	"github.com/legion/sms-gateway/internal/translate"
 	"github.com/legion/sms-gateway/internal/watch"
 	"github.com/legion/sms-gateway/test/integration/harness"
 )
@@ -118,6 +119,20 @@ type labOptions struct {
 	// runs it far faster than production so a change made mid-test is picked
 	// up within a poll or two.
 	registrationInterval time.Duration
+	// translator builds the thing that attaches translations to forwarded
+	// messages. It is a function of the logger rather than a value because in
+	// production the translator writes to the daemon's log, which is the same
+	// destination as the service's, and the outage line only means anything if
+	// the lab can see it. Nil is the production default: translation off.
+	translator func(logf func(format string, args ...any)) *translate.Translator
+}
+
+// labTranslatorFrom builds the lab's translator, if the test asked for one.
+func labTranslatorFrom(opts labOptions, lg *labLog) *translate.Translator {
+	if opts.translator == nil {
+		return nil
+	}
+	return opts.translator(lg.logf)
 }
 
 // startLab brings up the fake modem and the real watch service against it.
@@ -175,6 +190,8 @@ func startLabWith(t *testing.T, opts labOptions) *lab {
 		Router:   forward.NewRouter([]config.ForwardRule{{Name: "all", From: "*", To: []string{"lab"}}}),
 		Channels: map[string]forward.Channel{"lab": ch},
 		Log:      lg.logf,
+
+		Translator: labTranslatorFrom(opts, lg),
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
