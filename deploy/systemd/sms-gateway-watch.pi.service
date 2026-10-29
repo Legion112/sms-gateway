@@ -2,12 +2,14 @@
 Description=SMS Gateway watch daemon (forward incoming SMS)
 After=network-online.target
 Wants=network-online.target
-# No dependency on sms-tunnel.service at all. The household gateway already
-# routes non-RU traffic out of the country, so the SSH SOCKS tunnel was a second
-# hop to the same VPS rather than a fallback: its own packets were marked and
-# sent through that same exit, so it could not survive the exit failing.
-# Set telegram.proxy_url again, and re-enable the tunnel, if this Pi is ever
-# moved behind a gateway without that split tunnel.
+# No dependency on anything that carries traffic off the Pi. The household
+# router runs the split tunnel that routes blocked destinations abroad, so
+# Telegram is reachable directly and the gateway needs no proxy of its own.
+# The SSH SOCKS tunnel this unit once wanted has been removed: it was a second
+# hop to the same VPS rather than a fallback, since its own packets were marked
+# and sent through that same exit and so could not survive the exit failing.
+# If this Pi is ever moved behind a router without that split tunnel, set
+# telegram.proxy_url and give it a path out again.
 #
 # Never stop trying. The default start limit gives up after 5 restarts in 10s
 # and leaves the gateway down until someone notices.

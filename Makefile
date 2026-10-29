@@ -1,4 +1,4 @@
-.PHONY: build clean test test-integration vet scan scan-history hooks deploy_pi deploy-tunnel deploy-watch install-tunnel-service install-watch-service install-watch-pi
+.PHONY: build clean test test-integration vet scan scan-history hooks deploy_pi deploy-watch install-watch-service install-watch-pi
 
 BIN_DIR := bin
 BINS := sms-gateway sms-gateway-watch sms-gateway-scan
@@ -53,9 +53,6 @@ vet:
 deploy_pi:
 	rsync -avz --exclude='bin/' --exclude='config.yaml' --exclude='data/' ./ $(PI_HOST):$(PI_DIR)
 
-deploy-tunnel: deploy_pi
-	ssh -t $(PI_HOST) 'sudo cp $(PI_DIR)/deploy/systemd/sms-tunnel.service /etc/systemd/system/sms-tunnel.service && sudo systemctl daemon-reload && sudo systemctl enable sms-tunnel && sudo systemctl restart sms-tunnel'
-
 deploy-watch: deploy_pi
 	ssh -t $(PI_HOST) '$(PI_GO_PATH); cd $(PI_DIR) && make install-watch-pi'
 
@@ -71,12 +68,6 @@ install-watch-service: build
 	sudo systemctl daemon-reload
 	sudo systemctl enable sms-gateway-watch
 	sudo systemctl restart sms-gateway-watch
-
-install-tunnel-service:
-	sudo cp deploy/systemd/sms-tunnel.service /etc/systemd/system/
-	sudo systemctl daemon-reload
-	sudo systemctl enable sms-tunnel
-	sudo systemctl restart sms-tunnel
 
 mount-pi-db:
 	@mkdir -p /home/legion/github/sms-gateway/data/pi-db

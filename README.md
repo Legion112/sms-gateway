@@ -241,21 +241,25 @@ cd ~/smsgateway && make build
 
 If a port is **busy**, stop the watch daemon first (`pkill sms-gateway-watch`). If `ec25-main` fails on `/dev/ttyUSB2`, try `/dev/ttyUSB3` in config.
 
-### Telegram via SSH tunnel (Russia / blocked regions)
+### Reaching Telegram from a blocked region
 
-> Not needed when the network's gateway already routes blocked destinations
-> abroad, e.g. a split tunnel on the router. Check first: if `curl
-> https://api.telegram.org/` answers from the device, `proxy_url` only adds a
-> hop. It is worth confirming the tunnel is a genuinely independent path and not
-> one whose own packets ride over that same gateway — if it is not, it adds a
-> failure mode without adding a fallback.
+This deployment needs nothing here. The household router runs a split tunnel that
+routes blocked destinations abroad, so `api.telegram.org` answers directly from the
+Pi and the gateway talks to it with no proxy at all.
 
-When `api.telegram.org` is unreachable, route Bot API traffic through a SOCKS proxy created by SSH to an outside VPS.
+Check before adding one: if `curl https://api.telegram.org/` answers from the device,
+`proxy_url` only adds a hop and a failure mode.
 
-1. Create tunnel user on VPN and deploy key (see [`deploy/systemd/sms-tunnel.service`](deploy/systemd/sms-tunnel.service)).
-2. On Pi config, set `channels.my-telegram.telegram.proxy_url: socks5://127.0.0.1:1080`.
-3. Start tunnel: `sudo systemctl enable --now sms-tunnel` (or manual `ssh -N -D 127.0.0.1:1080 ...`).
-4. Env template: [`deploy/env.pi.example`](deploy/env.pi.example). Pi watch unit: [`deploy/systemd/sms-gateway-watch.pi.service`](deploy/systemd/sms-gateway-watch.pi.service).
+If it does not answer, set `channels.my-telegram.telegram.proxy_url` to a SOCKS or HTTP
+proxy that has its own route out — `socks5://127.0.0.1:1080` for a local SSH `-D` tunnel,
+for instance. One caveat learned the hard way: a tunnel is only a fallback if it is a
+genuinely independent path. An SSH tunnel to the same VPS the router already exits
+through is a second hop to the same place, and it dies when that exit dies. This
+repository used to ship an `sms-tunnel.service` unit for exactly that arrangement; it was
+removed once the router took the job over.
+
+Env template: [`deploy/env.pi.example`](deploy/env.pi.example). Pi watch unit:
+[`deploy/systemd/sms-gateway-watch.pi.service`](deploy/systemd/sms-gateway-watch.pi.service).
 
 ## Prerequisites
 
@@ -493,9 +497,9 @@ a number that grows steadily points at the hardware or the USB cable, not the da
 
 Two deliberate choices sit behind this:
 
-- The unit uses `Wants=sms-tunnel.service`, **not** `Requires=`. The tunnel is only how
-  messages leave the Pi; binding reception to it meant every tunnel restart also stopped
-  the gateway.
+- The unit depends on nothing that carries traffic off the Pi. How messages leave is not
+  reception's business, and an earlier version that bound the two together meant every
+  restart of the outbound path also stopped the gateway from receiving.
 - `Restart=always` with `StartLimitIntervalSec=0`. A clean exit still means no SMS are
   arriving, and the default start limit gives up after 5 restarts in 10s.
 
@@ -676,7 +680,7 @@ cmd/sms-gateway-watch/    Watch daemon binary
 cmd/sms-gateway-scan/     Leak scanner, also installed as the git hooks
 config.example.yaml       Example configuration
 deploy/env.pi.example     Pi env file template (bot token)
-deploy/systemd/           systemd units (watch daemon, SSH tunnel)
+deploy/systemd/           systemd units (watch daemon, Wi-Fi watchdog)
 deploy/udev/              Optional udev rules for serial driver
 test/integration/         Serial lab: real driver against a pseudo-terminal
 .github/workflows/ci.yml  CI: gofmt, build, vet, race tests, arm64 cross-build, lab, leak scan
